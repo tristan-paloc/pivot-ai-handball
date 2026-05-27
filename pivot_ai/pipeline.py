@@ -152,7 +152,7 @@ def interpoler_positions(
             continue
 
         nouvelle: list[PositionJoueur] = [positions[0]]
-        for prec, suiv in zip(positions, positions[1:]):
+        for prec, suiv in zip(positions, positions[1:], strict=False):
             gap = suiv.frame_idx - prec.frame_idx
             if gap > 1 and gap <= max_gap_frames:
                 for k in range(1, gap):

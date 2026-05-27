@@ -16,8 +16,7 @@ from pivot_ai.decoupage import (
     decouper_clips_video,
     detecter_actions,
 )
-
-from .conftest import generer_video_factice
+from tests.conftest import generer_video_factice
 
 
 def _detection_avec_tracker_ids(tracker_ids: list[int], class_ids: list[int]) -> sv.Detections:

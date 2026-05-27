@@ -25,9 +25,7 @@ from pivot_ai.pipeline import (
     traiter_match_complet,
 )
 from pivot_ai.stats import PositionJoueur
-
-from .conftest import detections_fabriquees, generer_video_factice
-
+from tests.conftest import generer_video_factice
 
 # Homographie identite-like : pixels = metres (pratique pour tests)
 _CORRESPONDANCES_TEST = {

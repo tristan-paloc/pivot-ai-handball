@@ -1,0 +1,13 @@
+{
+  "_commentaire": "Exemple de fichier de correspondances pour calibrer l'homographie. Modifier les coordonnees pixel selon la frame de calibration de votre clip. Les coordonnees terrain_m sont fixes pour un terrain handball 40m x 20m (voir POINTS_TERRAIN_M dans pivot_ai/config.py). Minimum 4 points ; plus on en a, plus l'estimation est robuste (RANSAC active a partir de 5).",
+  "A": {"pixel": [120, 540], "terrain_m": [0.0, 0.0]},
+  "B": {"pixel": [1800, 540], "terrain_m": [40.0, 0.0]},
+  "C": {"pixel": [1700, 300], "terrain_m": [40.0, 20.0]},
+  "D": {"pixel": [220, 300], "terrain_m": [0.0, 20.0]},
+  "E": {"pixel": [960, 540], "terrain_m": [20.0, 0.0]},
+  "F": {"pixel": [960, 300], "terrain_m": [20.0, 20.0]},
+  "M_prime": {"pixel": [150, 480], "terrain_m": [0.0, 8.5]},
+  "N_prime": {"pixel": [150, 380], "terrain_m": [0.0, 11.5]},
+  "M": {"pixel": [1770, 480], "terrain_m": [40.0, 8.5]},
+  "N": {"pixel": [1770, 380], "terrain_m": [40.0, 11.5]}
+}

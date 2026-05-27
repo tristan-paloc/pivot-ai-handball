@@ -6,7 +6,6 @@ import math
 import shutil
 from pathlib import Path
 
-import cv2
 import numpy as np
 import pytest
 import supervision as sv
@@ -17,6 +16,7 @@ from pivot_ai.decoupage import (
     decouper_clips_video,
     detecter_actions,
 )
+from tests.conftest import generer_video_factice
 
 
 def _detection_avec_tracker_ids(tracker_ids: list[int], class_ids: list[int]) -> sv.Detections:
@@ -225,24 +225,11 @@ def test_detecter_actions_seuils_incoherents() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _generer_video_test(chemin: Path, nb_frames: int = 100, fps: float = 25.0) -> None:
-    """Genere une mini-video MP4 valide pour tester ffmpeg."""
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(chemin), fourcc, fps, (160, 120))
-    if not writer.isOpened():
-        pytest.skip("cv2.VideoWriter ne peut pas creer la video de test")
-    for i in range(nb_frames):
-        # Frame avec un degrade qui evolue, donne quelques keyframes
-        frame = np.full((120, 160, 3), i * 2 % 255, dtype=np.uint8)
-        writer.write(frame)
-    writer.release()
-
-
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg non installe")
 def test_decouper_clips_video_bout_en_bout(tmp_path: Path) -> None:
     """Decoupage reel via ffmpeg : verifie creation des fichiers et bornes nommage."""
     source = tmp_path / "source.mp4"
-    _generer_video_test(source, nb_frames=100, fps=25.0)  # 4s
+    generer_video_factice(source, nb_frames=100, fps=25.0, largeur=160, hauteur=120)  # 4s
 
     actions = [
         Action(frame_debut=0, frame_fin=25, duree_s=1.0,
@@ -276,7 +263,7 @@ def test_decouper_clips_video_liste_vide(tmp_path: Path) -> None:
     if shutil.which("ffmpeg") is None:
         pytest.skip("ffmpeg non installe")
     source = tmp_path / "src.mp4"
-    _generer_video_test(source, nb_frames=50, fps=25.0)
+    generer_video_factice(source, nb_frames=50, fps=25.0, largeur=160, hauteur=120)
     dossier = tmp_path / "out"
     chemins = decouper_clips_video(source, [], dossier)
     assert chemins == []

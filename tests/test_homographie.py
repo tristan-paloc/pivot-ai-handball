@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from pivot_ai.homographie import Homographie, calibrer_homographie
+from pivot_ai.homographie import calibrer_homographie
 
 
 def test_calibrer_homographie_4_points_identite() -> None:

@@ -19,7 +19,7 @@ classifiers = [
 
 dependencies = [
     "ultralytics>=8.3.0",
-    "supervision>=0.25.1",
+    "supervision>=0.25.1,<0.30",
     "opencv-python-headless>=4.10.0",
     "numpy>=1.26.0,<2.0.0",
     "scikit-learn>=1.5.0",

@@ -38,23 +38,14 @@ pivot-ai-handball/
 
 3. Tes videos doivent etre dans `/MyDrive/PIVOT_AI/raw_clips/`.
 
-### Authentification GitHub (repo prive)
+### Authentification GitHub
 
-Le repo etant prive, Colab ne peut pas le cloner sans token. La 1ere cellule du notebook lit un Personal Access Token depuis les **Secrets Colab** (icone clef dans la barre laterale).
+Le repo est **public** : le clone HTTPS depuis Colab fonctionne en anonyme, aucun token requis.
 
-**Setup (une fois)** :
-
-1. Genere un PAT fine-grained sur https://github.com/settings/tokens?type=beta :
-   - *Resource owner* : `tristan-paloc`
-   - *Repository access* : Only select repositories → `pivot-ai-handball`
-   - *Permissions* : Contents → Read-only
-2. Dans Colab, icone clef → "Add new secret" :
-   - *Name* : `GITHUB_TOKEN`
-   - *Value* : colle le PAT
-   - Active "Notebook access" pour le notebook
-3. Relance la cellule de clone, ca passe.
-
-Le secret est chiffre cote Google et ne fuit jamais dans le notebook ou les outputs.
+> **Si tu repasses le repo en prive** : la 1ere cellule du notebook doit alors lire un Personal Access Token via Colab Secrets. Le mecanisme complet (PAT fine-grained + secret `GITHUB_TOKEN`) etait implemente jusqu'au commit `b33dc2d`, recuperable au besoin via :
+> ```bash
+> git show b33dc2d:scripts/build_notebook.py
+> ```
 
 ### Pieges Colab a connaitre
 

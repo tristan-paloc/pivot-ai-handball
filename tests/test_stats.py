@@ -195,6 +195,34 @@ def test_largeur_bloc_defensif_temporel() -> None:
     assert math.isclose(df["largeur_y_m"].to_list()[1], 8.0, abs_tol=1e-6)
 
 
+def test_vitesse_max_outlier_cappee_par_defaut() -> None:
+    """Un saut tracker (10m en 1 frame) donne >100 m/s : cappe a defaut 12 m/s max."""
+    fps = 25.0
+    positions = [
+        PositionJoueur(frame_idx=0, x_m=0.0, y_m=0.0),
+        PositionJoueur(frame_idx=1, x_m=0.5, y_m=0.0),  # ~12.5 m/s, juste au seuil
+        PositionJoueur(frame_idx=2, x_m=20.0, y_m=0.0),  # saut tracker : 487.5 m/s
+        PositionJoueur(frame_idx=3, x_m=20.4, y_m=0.0),  # 10 m/s
+    ]
+    df = calculer_stats_joueur({1: positions}, fps=fps)
+    ligne = df.row(0, named=True)
+    # Le saut de 487 m/s doit etre exclu, max conserve = 10 m/s
+    assert ligne["vitesse_max_m_s"] <= 12.0
+    assert ligne["vitesse_max_m_s"] == pytest.approx(10.0, abs=1e-3)
+
+
+def test_vitesse_max_outlier_sans_cap() -> None:
+    """Avec seuil_vitesse_max_m_s=None, les outliers passent."""
+    fps = 25.0
+    positions = [
+        PositionJoueur(frame_idx=0, x_m=0.0, y_m=0.0),
+        PositionJoueur(frame_idx=1, x_m=100.0, y_m=0.0),  # 2500 m/s
+    ]
+    df = calculer_stats_joueur({1: positions}, fps=fps, seuil_vitesse_max_m_s=None)
+    ligne = df.row(0, named=True)
+    assert ligne["vitesse_max_m_s"] > 1000.0
+
+
 def test_largeur_bloc_defensif_vide() -> None:
     """Aucun defenseur de l'equipe demandee : DataFrame vide avec bon schema."""
     df = calculer_largeur_bloc_defensif(

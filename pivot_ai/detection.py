@@ -78,36 +78,72 @@ def detecter_video(
     detecteur: DetecteurLocal,
     subsample: int = 1,
     max_frames: int | None = None,
+    batch_size: int = 8,
 ) -> dict[int, sv.Detections]:
     """Detecte sur toutes les frames d'une video (echantillonnees).
 
+    Iteration sequentielle (`cap.read()` en continu) avec skip des frames
+    non echantillonnees. Bannit `cap.set(CAP_PROP_POS_FRAMES, ...)` qui
+    re-decode depuis le keyframe precedent et explose les temps sur MP4.
+    Batch les frames retenues avant `detecter_batch` pour saturer le GPU.
+
     Args:
         chemin_video: chemin vers le MP4
-        detecteur: instance de DetecteurLocal
+        detecteur: instance avec une methode `detecter_batch(list[ndarray])`
         subsample: 1 frame sur N
-        max_frames: limite optionnelle pour debug
+        max_frames: limite optionnelle (sur la frame index source)
+        batch_size: taille de batch GPU (8 = bon defaut T4 / YOLOv8m / 640px)
 
     Returns:
         dict frame_index -> Detections
     """
+    if subsample < 1:
+        raise ValueError(f"subsample doit etre >= 1, recu {subsample}")
+    if batch_size < 1:
+        raise ValueError(f"batch_size doit etre >= 1, recu {batch_size}")
+
     cap = cv2.VideoCapture(str(chemin_video))
+    if not cap.isOpened():
+        raise RuntimeError(f"Impossible d'ouvrir la video : {chemin_video}")
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     if max_frames is not None:
         total = min(total, max_frames)
 
     detections_par_frame: dict[int, sv.Detections] = {}
-    for fi in range(0, total, subsample):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
-        ret, frame = cap.read()
-        if not ret:
-            break
-        detections_par_frame[fi] = detecteur.detecter(frame)
+    batch_frames: list[np.ndarray] = []
+    batch_indices: list[int] = []
 
-    cap.release()
+    def flush_batch() -> None:
+        if not batch_frames:
+            return
+        resultats = detecteur.detecter_batch(batch_frames)
+        for idx, dets in zip(batch_indices, resultats, strict=True):
+            detections_par_frame[idx] = dets
+        batch_frames.clear()
+        batch_indices.clear()
+
+    try:
+        fi = 0
+        while fi < total:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if fi % subsample == 0:
+                batch_frames.append(frame)
+                batch_indices.append(fi)
+                if len(batch_frames) >= batch_size:
+                    flush_batch()
+            fi += 1
+        flush_batch()
+    finally:
+        cap.release()
+
     logger.info(
-        "Detection video terminee : %d frames traitees sur %d (subsample=%d)",
+        "Detection video terminee : %d frames analysees sur %d total "
+        "(subsample=%d, batch_size=%d)",
         len(detections_par_frame),
         total,
         subsample,
+        batch_size,
     )
     return detections_par_frame

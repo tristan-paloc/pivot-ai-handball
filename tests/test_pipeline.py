@@ -220,6 +220,8 @@ class DetecteurStub:
 
     def __init__(self, bbox: tuple[float, float, float, float] = (140, 80, 180, 200)) -> None:
         self.bbox = bbox
+        self.nb_appels_batch = 0  # pour les tests perf
+        self.tailles_batch_observees: list[int] = []
 
     def detecter(self, frame: np.ndarray) -> sv.Detections:
         return sv.Detections(
@@ -227,6 +229,11 @@ class DetecteurStub:
             confidence=np.array([0.9], dtype=np.float32),
             class_id=np.array([CLASSES_HANDBALL["players"]], dtype=int),
         )
+
+    def detecter_batch(self, frames: list[np.ndarray]) -> list[sv.Detections]:
+        self.nb_appels_batch += 1
+        self.tailles_batch_observees.append(len(frames))
+        return [self.detecter(f) for f in frames]
 
 
 def test_traiter_match_complet_bout_en_bout(tmp_path: Path) -> None:
@@ -298,3 +305,30 @@ def test_traiter_match_complet_video_inexistante(tmp_path: Path) -> None:
             dossier_sortie=tmp_path / "out",
             detecteur=DetecteurStub(),
         )
+
+
+def test_traiter_match_complet_utilise_detecter_batch(tmp_path: Path) -> None:
+    """Le pipeline appelle detecter_batch (et non detecter frame-par-frame)."""
+    source = tmp_path / "match.mp4"
+    generer_video_factice(source, nb_frames=40, fps=25.0, largeur=320, hauteur=240)
+    correspondances = {
+        "A": {"pixel": (0, 0), "terrain_m": (0.0, 0.0)},
+        "B": {"pixel": (320, 0), "terrain_m": (40.0, 0.0)},
+        "C": {"pixel": (320, 240), "terrain_m": (40.0, 20.0)},
+        "D": {"pixel": (0, 240), "terrain_m": (0.0, 20.0)},
+    }
+    stub = DetecteurStub()
+    traiter_match_complet(
+        chemin_video=source,
+        correspondances_homographie=correspondances,
+        dossier_sortie=tmp_path / "out",
+        subsample=2,
+        generer_video_radar=False,
+        decouper_actions=False,
+        detecteur=stub,
+        batch_size=8,
+    )
+    # 40 frames / subsample 2 = 20 frames echantillonnees.
+    # Avec batch_size=8 : 8 + 8 + 4 = 3 appels.
+    assert stub.nb_appels_batch == 3
+    assert stub.tailles_batch_observees == [8, 8, 4]

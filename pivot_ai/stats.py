@@ -44,11 +44,17 @@ _COLONNES_STATS: tuple[str, ...] = (
 )
 
 
+# Vitesse max realiste pour un humain en sprint (~43 km/h, record monde 100m).
+# Au-dela : artefact tracker (ID qui saute sur un autre joueur).
+SEUIL_VITESSE_MAX_REALISTE_M_S: float = 12.0
+
+
 def _stats_un_tracker(
     tracker_id: int,
     positions: list[PositionJoueur],
     fps: float,
     ignorer_interpolees: bool,
+    seuil_vitesse_max_m_s: float | None,
 ) -> dict[str, float | int]:
     """Calcule les stats agregees pour un seul tracker."""
     if ignorer_interpolees:
@@ -109,7 +115,18 @@ def _stats_un_tracker(
 
     temps_total_s = float((idxs[-1] - idxs[0]) / fps)
     vitesse_moyenne = distance_totale / temps_total_s if temps_total_s > 0 else 0.0
-    vitesse_max = float(vitesses.max())
+
+    # Capper vitesse_max pour eviter les outliers tracker (ID qui saute sur
+    # un autre joueur entre 2 frames echantillonnees). Le record humain 100m
+    # est ~12.4 m/s ; tout au-dessus est un artefact.
+    if seuil_vitesse_max_m_s is not None and len(vitesses) > 0:
+        vitesses_filtrees = vitesses[vitesses <= seuil_vitesse_max_m_s]
+        if len(vitesses_filtrees) > 0:
+            vitesse_max = float(vitesses_filtrees.max())
+        else:
+            vitesse_max = float(seuil_vitesse_max_m_s)
+    else:
+        vitesse_max = float(vitesses.max())
 
     return {
         "tracker_id": tracker_id,
@@ -131,6 +148,7 @@ def calculer_stats_joueur(
     positions_par_tracker: dict[int, list[PositionJoueur]],
     fps: float,
     ignorer_interpolees: bool = True,
+    seuil_vitesse_max_m_s: float | None = SEUIL_VITESSE_MAX_REALISTE_M_S,
 ) -> pl.DataFrame:
     """Calcule les stats agregees par tracker_id.
 
@@ -138,6 +156,8 @@ def calculer_stats_joueur(
         positions_par_tracker: dict tracker_id -> liste de PositionJoueur
         fps: framerate du clip
         ignorer_interpolees: si True, exclut les positions interpolees du calcul
+        seuil_vitesse_max_m_s: vitesse max realiste pour filtrer les outliers
+            tracker dans vitesse_max_m_s. Mettre None pour desactiver le cap.
 
     Returns:
         DataFrame Polars avec colonnes :
@@ -171,7 +191,9 @@ def calculer_stats_joueur(
         )
 
     lignes = [
-        _stats_un_tracker(tid, positions, fps, ignorer_interpolees)
+        _stats_un_tracker(
+            tid, positions, fps, ignorer_interpolees, seuil_vitesse_max_m_s
+        )
         for tid, positions in positions_par_tracker.items()
     ]
     df = pl.DataFrame(lignes).select(_COLONNES_STATS)

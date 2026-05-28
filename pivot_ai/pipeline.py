@@ -44,6 +44,8 @@ class _ProtocoleDetecteur(Protocol):
 
     def detecter(self, frame: np.ndarray) -> sv.Detections: ...
 
+    def detecter_batch(self, frames: list[np.ndarray]) -> list[sv.Detections]: ...
+
 
 @dataclass
 class ResultatPipeline:
@@ -360,17 +362,33 @@ def _lire_metadonnees_video(chemin: Path) -> tuple[float, int]:
 def _extraire_frames_indexees(
     chemin: Path, indices: list[int]
 ) -> dict[int, np.ndarray]:
-    """Extrait les frames aux indices donnes (relit la video, sequentiel rapide)."""
+    """Extrait les frames aux indices donnes en une passe sequentielle.
+
+    Iteration unique avec cap.read() et collecte des frames dont l'index
+    est dans `indices`. Evite les `cap.set(CAP_PROP_POS_FRAMES, ...)`
+    qui forcent un re-decode depuis le keyframe precedent (tres lent
+    sur MP4 H.264).
+    """
     cap = cv2.VideoCapture(str(chemin))
     if not cap.isOpened():
         raise RuntimeError(f"Impossible d'ouvrir la video : {chemin}")
+    indices_set = set(int(i) for i in indices)
+    if not indices_set:
+        cap.release()
+        return {}
+    max_idx = max(indices_set)
     frames: dict[int, np.ndarray] = {}
-    for fi in sorted(indices):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
-        ret, frame = cap.read()
-        if ret:
-            frames[fi] = frame
-    cap.release()
+    try:
+        fi = 0
+        while fi <= max_idx:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if fi in indices_set:
+                frames[fi] = frame
+            fi += 1
+    finally:
+        cap.release()
     return frames
 
 
@@ -384,6 +402,7 @@ def traiter_match_complet(
     detecteur: _ProtocoleDetecteur | None = None,
     modele_config: ModeleConfig | None = None,
     terrain_config: TerrainConfig | None = None,
+    batch_size: int = 8,
 ) -> ResultatPipeline:
     """Pipeline complet : video -> stats + clips d'actions + video radar SBS.
 
@@ -436,7 +455,7 @@ def traiter_match_complet(
         from pivot_ai.detection import DetecteurLocal
         detecteur = DetecteurLocal(modele_config)
     detections_par_frame = detecter_video(
-        chemin_source, detecteur, subsample=subsample
+        chemin_source, detecteur, subsample=subsample, batch_size=batch_size
     )
 
     # 4. Tracking

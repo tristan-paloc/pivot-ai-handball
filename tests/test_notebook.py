@@ -45,9 +45,20 @@ def test_notebook_appelle_pipeline() -> None:
 
 
 def test_notebook_a_au_moins_10_cellules() -> None:
-    """Le notebook a au moins 10 cellules (la version finale en a 21)."""
+    """Le notebook a au moins 10 cellules (la version actuelle en a 22)."""
     contenu = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
     assert len(contenu["cells"]) >= 10
+
+
+def test_notebook_utilise_github_token_secret() -> None:
+    """L'auth GitHub via Colab Secrets est presente (repo prive)."""
+    contenu = NOTEBOOK.read_text(encoding="utf-8")
+    assert "GITHUB_TOKEN" in contenu
+    assert "userdata" in contenu
+    # Le token n'est jamais ecrit en dur dans le notebook
+    # (verifie qu'il n'y a pas de regex ghp_* ou github_pat_* echappee)
+    assert "ghp_" not in contenu
+    assert "github_pat_" not in contenu
 
 
 def test_notebook_cellules_bien_typees() -> None:

@@ -47,11 +47,23 @@ class _ProtocoleDetecteur(Protocol):
 
 @dataclass
 class ResultatPipeline:
-    """Resultat complet d'un traitement de clip ou de match."""
+    """Resultat complet d'un traitement de clip ou de match.
+
+    Attributes:
+        chemin_video_source: video d'entree
+        chemin_video_radar: video SBS broadcast+radar si generee, sinon None
+        stats_joueurs: DataFrame Polars agrege par tracker
+        positions_par_tracker: positions terrain (m) brutes, par tracker_id.
+            Utile pour heatmaps et analyses spatiales detaillees.
+        actions_detectees: actions issues de detecter_actions
+        clips_decoupes: chemins des clips d'actions ffmpeg
+        metadonnees: dict d'infos (fps, nb_trackers, etc.)
+    """
 
     chemin_video_source: Path
     chemin_video_radar: Path | None
     stats_joueurs: pl.DataFrame
+    positions_par_tracker: dict[int, list[PositionJoueur]]
     actions_detectees: list[Action]
     clips_decoupes: list[Path]
     metadonnees: dict[str, Any] = field(default_factory=dict)
@@ -531,6 +543,7 @@ def traiter_match_complet(
         chemin_video_source=chemin_source,
         chemin_video_radar=chemin_video_radar,
         stats_joueurs=stats_df,
+        positions_par_tracker=positions_par_tracker,
         actions_detectees=actions,
         clips_decoupes=clips,
         metadonnees=metadonnees,

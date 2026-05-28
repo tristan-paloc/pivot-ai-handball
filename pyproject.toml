@@ -20,10 +20,15 @@ classifiers = [
 dependencies = [
     "ultralytics>=8.3.0",
     "supervision>=0.25.1,<0.30",
-    "opencv-python-headless>=4.10.0",
-    "numpy>=1.26.0,<2.0.0",
+    "opencv-python-headless>=4.10.0.84",
+    # numpy 2.x supporte par toutes les deps cibles (opencv 4.10.0.84+, supervision 0.25+,
+    # scikit-learn 1.5+, scipy 1.13+, polars 1.0+, pandas 2.2.2+, ultralytics 8.3+).
+    # On laisse sans upper bound pour eviter le conflit Colab 2026 (env pre-installe en numpy 2.x).
+    "numpy>=1.26.0",
     "scikit-learn>=1.5.0",
-    "pandas>=2.2.0",
+    # Pandas explicite : plotly.express l'exige ; il etait deja dependence transitive
+    # mais Colab peut le desinstaller en cas de conflit numpy si on ne le declare pas.
+    "pandas>=2.2.2",
     "polars>=1.0.0",
     "scipy>=1.13.0",
     "plotly>=5.20.0",

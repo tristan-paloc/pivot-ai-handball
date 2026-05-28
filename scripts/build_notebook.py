@@ -43,30 +43,75 @@ CELLULES = [
         "\n"
         "**Prerequis :** runtime GPU (Edition > Parametres du notebook > Accelerateur materiel = T4 GPU)."
     ),
-    md("## 1. Clone repo + install"),
-    code(
-        "import os, sys\n"
+    md(
+        "## 1. Authentification GitHub (repo prive)\n"
         "\n"
-        "REPO_URL = \"https://github.com/tristan-paloc/pivot-ai-handball.git\"\n"
-        "BRANCH   = \"main\"\n"
-        "REPO_DIR = \"/content/pivot-ai-handball\"\n"
+        "Le repo `tristan-paloc/pivot-ai-handball` est prive : il faut un **Personal Access Token (PAT)** GitHub pour le cloner depuis Colab.\n"
+        "\n"
+        "### Setup (a faire une fois)\n"
+        "\n"
+        "1. Generer un PAT sur GitHub :\n"
+        "   - Va sur https://github.com/settings/tokens?type=beta (fine-grained, recommande)\n"
+        "   - **Resource owner** : `tristan-paloc`\n"
+        "   - **Repository access** : *Only select repositories* → `pivot-ai-handball`\n"
+        "   - **Permissions** : Repository permissions → *Contents : Read-only*\n"
+        "   - Genere et copie le token (ne sera plus jamais affiche).\n"
+        "2. Dans Colab : icone **clef** (Secrets) dans la barre laterale gauche.\n"
+        "   - **Name** : `GITHUB_TOKEN`\n"
+        "   - **Value** : colle ton PAT\n"
+        "   - Coche **Notebook access** pour autoriser ce notebook a le lire.\n"
+        "\n"
+        "Le secret est stocke chiffre cote Google et n'apparait jamais dans le notebook."
+    ),
+    md("## 2. Clone repo + install"),
+    code(
+        "import os, sys, subprocess\n"
+        "from google.colab import userdata\n"
+        "\n"
+        "REPO_OWNER = \"tristan-paloc\"\n"
+        "REPO_NAME  = \"pivot-ai-handball\"\n"
+        "BRANCH     = \"main\"\n"
+        "REPO_DIR   = f\"/content/{REPO_NAME}\"\n"
+        "\n"
+        "try:\n"
+        "    GITHUB_TOKEN = userdata.get(\"GITHUB_TOKEN\")\n"
+        "except userdata.SecretNotFoundError as exc:\n"
+        "    raise RuntimeError(\n"
+        "        \"GITHUB_TOKEN absent des Secrets Colab. \"\n"
+        "        \"Cree-le en suivant les instructions de la cellule precedente.\"\n"
+        "    ) from exc\n"
+        "\n"
+        "REPO_URL = f\"https://{GITHUB_TOKEN}@github.com/{REPO_OWNER}/{REPO_NAME}.git\"\n"
         "\n"
         "if not os.path.exists(REPO_DIR):\n"
-        "    !git clone --branch {BRANCH} {REPO_URL} {REPO_DIR}\n"
+        "    res = subprocess.run(\n"
+        "        [\"git\", \"clone\", \"--branch\", BRANCH, \"--depth\", \"1\", REPO_URL, REPO_DIR],\n"
+        "        capture_output=True, text=True,\n"
+        "    )\n"
+        "    if res.returncode != 0:\n"
+        "        # Ne jamais logger le token : on masque l'URL dans l'erreur.\n"
+        "        msg = res.stderr.replace(GITHUB_TOKEN, \"***\")\n"
+        "        raise RuntimeError(f\"Echec git clone :\\n{msg}\")\n"
+        "    print(f\"Repo clone dans {REPO_DIR}\")\n"
         "else:\n"
-        "    !cd {REPO_DIR} && git pull\n"
+        "    res = subprocess.run(\n"
+        "        [\"git\", \"-C\", REPO_DIR, \"pull\"], capture_output=True, text=True\n"
+        "    )\n"
+        "    if res.returncode != 0:\n"
+        "        msg = res.stderr.replace(GITHUB_TOKEN, \"***\")\n"
+        "        raise RuntimeError(f\"Echec git pull :\\n{msg}\")\n"
+        "    print(f\"Repo a jour dans {REPO_DIR}\")\n"
         "\n"
         "%cd {REPO_DIR}\n"
         "!pip install -q -e \".[dev]\"\n"
         "\n"
-        "# Reload pour prendre en compte le module installe\n"
         "if REPO_DIR not in sys.path:\n"
         "    sys.path.insert(0, REPO_DIR)\n"
         "\n"
         "import pivot_ai\n"
         "print(f\"pivot_ai version : {pivot_ai.__version__}\")"
     ),
-    md("## 2. Verifier GPU"),
+    md("## 3. Verifier GPU"),
     code(
         "import torch\n"
         "print(f\"CUDA dispo : {torch.cuda.is_available()}\")\n"
@@ -74,7 +119,7 @@ CELLULES = [
         "    print(f\"GPU : {torch.cuda.get_device_name(0)}\")\n"
         "    print(f\"VRAM : {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} Go\")"
     ),
-    md("## 3. Monter Google Drive"),
+    md("## 4. Monter Google Drive"),
     code(
         "from google.colab import drive\n"
         "drive.mount('/content/drive', force_remount=False)\n"
@@ -87,7 +132,7 @@ CELLULES = [
         "!ls {CLIPS_DIR}"
     ),
     md(
-        "## 4. Choisir un clip et relever les points d'homographie\n"
+        "## 5. Choisir un clip et relever les points d'homographie\n"
         "\n"
         "Affiche une frame du clip. **Survole avec la souris** pour relever les pixels des points caracteristiques du terrain.\n"
         "\n"
@@ -148,7 +193,7 @@ CELLULES = [
         "print(f\"{len(correspondances)} correspondances renseignees\")"
     ),
     md(
-        "## 5. Test rapide sur clip court\n"
+        "## 6. Test rapide sur clip court\n"
         "\n"
         "Avant le pipeline complet, on lance une passe rapide pour valider l'enchainement :\n"
         "- subsample agressif (1 frame sur 5)\n"
@@ -181,7 +226,7 @@ CELLULES = [
         "print(resultat_test.stats_joueurs.head(10))"
     ),
     md(
-        "## 6. Pipeline complet\n"
+        "## 7. Pipeline complet\n"
         "\n"
         "Avec `subsample=2` (1 frame sur 2), on a une bonne qualite de tracking pour ~1500 inferences/min sur T4.\n"
         "\n"
@@ -230,7 +275,7 @@ CELLULES = [
         "print(f\"  Parquet : {OUTPUTS_DIR}/stats_joueurs.parquet\")\n"
         "print(f\"  Video radar SBS : {resultat.chemin_video_radar}\")"
     ),
-    md("## 7. Visualiser quelques frames du rendu final"),
+    md("## 8. Visualiser quelques frames du rendu final"),
     code(
         "import matplotlib.pyplot as plt\n"
         "\n"
@@ -251,7 +296,7 @@ CELLULES = [
         "plt.show()"
     ),
     md(
-        "## 8. Heatmap d'un joueur\n"
+        "## 9. Heatmap d'un joueur\n"
         "\n"
         "Visualise la densite de presence d'un joueur sur le terrain. On prend par defaut le tracker le plus present."
     ),
@@ -283,7 +328,7 @@ CELLULES = [
         "fig.show()"
     ),
     md(
-        "## 9. Largeur du bloc defensif au cours du temps\n"
+        "## 10. Largeur du bloc defensif au cours du temps\n"
         "\n"
         "Charge le DataFrame de la largeur du bloc defensif (MHB ou ADV) et le trace via plotly."
     ),

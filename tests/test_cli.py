@@ -164,6 +164,7 @@ def test_commande_traiter_bout_en_bout_avec_mock(tmp_path: Path) -> None:
         chemin_video_source=source,
         chemin_video_radar=sortie / "match_radar_sbs.mp4",
         stats_joueurs=pl.DataFrame({"tracker_id": [1]}),
+        positions_par_tracker={},
         actions_detectees=[],
         clips_decoupes=[],
         metadonnees={"nb_trackers_total": 3, "nb_joueurs_classes": 2},

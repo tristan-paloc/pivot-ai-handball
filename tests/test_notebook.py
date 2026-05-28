@@ -34,7 +34,9 @@ def test_notebook_url_repo_remplacee() -> None:
     """L'URL placeholder REMPLACE_PAR_TON_USERNAME a bien ete substituee."""
     contenu = NOTEBOOK.read_text(encoding="utf-8")
     assert "REMPLACE_PAR_TON_USERNAME" not in contenu
-    assert "tristan-paloc/pivot-ai-handball" in contenu
+    # L'URL est construite via f-string : on verifie les composants separes
+    assert "tristan-paloc" in contenu
+    assert "pivot-ai-handball" in contenu
 
 
 def test_notebook_appelle_pipeline() -> None:
@@ -50,15 +52,17 @@ def test_notebook_a_au_moins_10_cellules() -> None:
     assert len(contenu["cells"]) >= 10
 
 
-def test_notebook_utilise_github_token_secret() -> None:
-    """L'auth GitHub via Colab Secrets est presente (repo prive)."""
+def test_notebook_clone_anonyme_repo_public() -> None:
+    """Repo public : clone HTTPS anonyme, pas de PAT ni de userdata.get."""
     contenu = NOTEBOOK.read_text(encoding="utf-8")
-    assert "GITHUB_TOKEN" in contenu
-    assert "userdata" in contenu
-    # Le token n'est jamais ecrit en dur dans le notebook
-    # (verifie qu'il n'y a pas de regex ghp_* ou github_pat_* echappee)
+    # URL HTTPS publique (construite via f-string sur REPO_OWNER/REPO_NAME)
+    assert "https://github.com/" in contenu
+    # Aucun token en dur (defense en profondeur)
     assert "ghp_" not in contenu
     assert "github_pat_" not in contenu
+    # Plus de mecanisme PAT cote notebook
+    assert "GITHUB_TOKEN" not in contenu
+    assert "userdata.get" not in contenu
 
 
 def test_notebook_cellules_bien_typees() -> None:

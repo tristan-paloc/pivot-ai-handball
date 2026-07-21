@@ -136,6 +136,41 @@ def projeter_detections_en_terrain(
 # ---------------------------------------------------------------------------
 
 
+def filtrer_traceurs_courts(
+    positions_par_tracker: dict[int, list[PositionJoueur]],
+    min_frames: int,
+) -> dict[int, list[PositionJoueur]]:
+    """Ecarte les trackers vus sur trop peu de frames reelles (fragments).
+
+    ByteTrack (sans re-identification par apparence) fragmente les joueurs
+    occultes en multiples IDs courts. Ce filtre supprime la longue traine de
+    fragments pour ne garder que les trajectoires substantielles, exploitables
+    pour les stats.
+
+    Args:
+        positions_par_tracker: positions reelles par tracker_id
+        min_frames: nb minimum de positions reelles pour conserver un tracker
+            (<= 1 desactive le filtre)
+
+    Returns:
+        dict filtre tracker_id -> positions.
+    """
+    if min_frames <= 1:
+        return positions_par_tracker
+    filtre = {
+        tid: positions
+        for tid, positions in positions_par_tracker.items()
+        if sum(1 for p in positions if not p.interpole) >= min_frames
+    }
+    logger.info(
+        "Filtre fragments : %d trackers conserves sur %d (min_frames=%d)",
+        len(filtre),
+        len(positions_par_tracker),
+        min_frames,
+    )
+    return filtre
+
+
 def interpoler_positions(
     positions_par_tracker: dict[int, list[PositionJoueur]],
     max_gap_frames: int = 10,
@@ -403,6 +438,7 @@ def traiter_match_complet(
     modele_config: ModeleConfig | None = None,
     terrain_config: TerrainConfig | None = None,
     batch_size: int = 8,
+    min_frames_track: int = 0,
 ) -> ResultatPipeline:
     """Pipeline complet : video -> stats + clips d'actions + video radar SBS.
 
@@ -417,6 +453,10 @@ def traiter_match_complet(
             Permet d'injecter un stub pour les tests.
         modele_config: config du detecteur si on instancie par defaut
         terrain_config: config terrain (defaut : TerrainConfig())
+        batch_size: taille de batch GPU pour la detection
+        min_frames_track: filtre les trackers vus sur moins de N frames reelles
+            (fragments). 0 desactive le filtre. Recommande ~8-12 en production
+            pour ne garder que les trajectoires exploitables.
 
     Returns:
         ResultatPipeline avec tous les artefacts produits.
@@ -480,6 +520,12 @@ def traiter_match_complet(
         classe_finale,
         homographie,
         terrain_config=config,
+    )
+
+    # 6bis. Filtre des fragments courts (traine de tracks ephemeres)
+    nb_trackers_avant_filtre = len(positions_par_tracker)
+    positions_par_tracker = filtrer_traceurs_courts(
+        positions_par_tracker, min_frames=min_frames_track
     )
 
     # 7. Interpolation (pour rendu radar uniquement)
@@ -554,6 +600,9 @@ def traiter_match_complet(
         "cluster_mhb": cluster_mhb,
         "nb_trackers_total": len(classe_finale),
         "nb_joueurs_classes": len(equipe_finale),
+        "min_frames_track": min_frames_track,
+        "nb_joueurs_avant_filtre": nb_trackers_avant_filtre,
+        "nb_joueurs_stats": len(positions_par_tracker),
         "nb_actions_detectees": len(actions),
     }
     logger.info("Pipeline termine. Metadonnees : %s", metadonnees)

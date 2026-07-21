@@ -19,6 +19,7 @@ from pivot_ai.pipeline import (
     COULEUR_REF,
     ResultatPipeline,
     couleur_tracker,
+    filtrer_traceurs_courts,
     generer_video_sbs,
     interpoler_positions,
     projeter_detections_en_terrain,
@@ -128,6 +129,28 @@ def test_interpoler_gap_grand_ne_remplit_pas() -> None:
     res = interpoler_positions(positions, max_gap_frames=10)
     assert len(res[1]) == 2
     assert all(not p.interpole for p in res[1])
+
+
+def test_filtrer_traceurs_courts() -> None:
+    """Garde les trackers vus >= min_frames reelles, ecarte les fragments."""
+    positions = {
+        1: [PositionJoueur(fi, float(fi), 5.0) for fi in range(20)],  # 20 reelles
+        2: [PositionJoueur(0, 1.0, 1.0), PositionJoueur(1, 2.0, 2.0)],  # 2 reelles
+        3: [
+            PositionJoueur(0, 1.0, 1.0, interpole=False),
+            PositionJoueur(1, 2.0, 2.0, interpole=True),
+            PositionJoueur(2, 3.0, 3.0, interpole=True),
+        ],  # 1 seule reelle (2 interpolees ne comptent pas)
+    }
+    res = filtrer_traceurs_courts(positions, min_frames=5)
+    assert set(res.keys()) == {1}
+
+
+def test_filtrer_traceurs_courts_desactive() -> None:
+    """min_frames <= 1 ne filtre rien."""
+    positions = {1: [PositionJoueur(0, 0.0, 0.0)]}
+    assert filtrer_traceurs_courts(positions, min_frames=0) == positions
+    assert filtrer_traceurs_courts(positions, min_frames=1) == positions
 
 
 def test_interpoler_pas_d_extrapolation_aux_bords() -> None:

@@ -156,6 +156,7 @@ def commande_traiter(args: argparse.Namespace) -> int:
             subsample=args.subsample,
             generer_video_radar=not args.no_video_radar,
             decouper_actions=not args.no_decoupage,
+            min_frames_track=args.min_frames_track,
         )
     except Exception:
         logger.exception("Echec du pipeline")
@@ -194,6 +195,13 @@ def construire_parser() -> argparse.ArgumentParser:
     )
     p_traiter.add_argument(
         "--subsample", type=int, default=2, help="1 frame sur N (defaut 2)"
+    )
+    p_traiter.add_argument(
+        "--min-frames-track",
+        type=int,
+        default=0,
+        dest="min_frames_track",
+        help="Ecarte les trackers vus sur moins de N frames (fragments). 0 = pas de filtre.",
     )
     p_traiter.add_argument(
         "--no-video-radar",

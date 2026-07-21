@@ -458,9 +458,9 @@ def traiter_match_complet(
         chemin_source, detecteur, subsample=subsample, batch_size=batch_size
     )
 
-    # 4. Tracking
+    # 4. Tracking (framerate corrige du subsample pour le modele de mouvement)
     detections_trackees, classe_finale = tracker_detections(
-        detections_par_frame, fps=fps
+        detections_par_frame, fps=fps, subsample=subsample
     )
 
     # 5. Equipes (necessite les frames echantillonnees pour extraire les couleurs)

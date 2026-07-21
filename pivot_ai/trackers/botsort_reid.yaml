@@ -1,0 +1,28 @@
+# Configuration BoT-SORT avec re-identification par apparence (ReID).
+# Schema Ultralytics (>= 8.3). Utilise par tracker_video_botsort.
+#
+# Le ReID calcule une empreinte visuelle par joueur : au contact/occlusion,
+# BoT-SORT compare les apparences pour rendre le bon tracker_id au bon joueur,
+# ce que ByteTrack (mouvement seul) ne sait pas faire.
+tracker_type: botsort
+
+# Seuils de detection (association haute/basse confiance facon ByteTrack)
+track_high_thresh: 0.25
+track_low_thresh: 0.1
+new_track_thresh: 0.25
+
+# Buffer plus long que le defaut (30) pour survivre aux occlusions du handball
+# dense sans perdre l'ID (exprime en frames effectives fournies au tracker).
+track_buffer: 60
+match_thresh: 0.8
+fuse_score: true
+
+# Global Motion Compensation : recale le mouvement camera (plan broadcast qui bouge)
+gmc_method: sparseOptFlow
+
+# ReID
+proximity_thresh: 0.5
+appearance_thresh: 0.25
+with_reid: true
+# "auto" : reutilise les features du modele YOLO, pas de modele ReID a telecharger
+model: auto

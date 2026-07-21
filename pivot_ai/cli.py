@@ -157,6 +157,7 @@ def commande_traiter(args: argparse.Namespace) -> int:
             generer_video_radar=not args.no_video_radar,
             decouper_actions=not args.no_decoupage,
             min_frames_track=args.min_frames_track,
+            tracker=args.tracker,
         )
     except Exception:
         logger.exception("Echec du pipeline")
@@ -202,6 +203,12 @@ def construire_parser() -> argparse.ArgumentParser:
         default=0,
         dest="min_frames_track",
         help="Ecarte les trackers vus sur moins de N frames (fragments). 0 = pas de filtre.",
+    )
+    p_traiter.add_argument(
+        "--tracker",
+        choices=["bytetrack", "botsort"],
+        default="bytetrack",
+        help="Backend de tracking : bytetrack (rapide) ou botsort (ReID, IDs stables au contact).",
     )
     p_traiter.add_argument(
         "--no-video-radar",

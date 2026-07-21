@@ -45,6 +45,7 @@ dev = [
     "ruff>=0.5.0",
     "ipykernel>=6.29.0",
     "jupyter>=1.0.0",
+    "pyyaml>=6.0",
 ]
 colab = [
     "google-colab",
@@ -57,6 +58,9 @@ pivot-ai = "pivot_ai.cli:main"
 where = ["."]
 include = ["pivot_ai*"]
 exclude = ["tests*", "notebooks*", "legacy*", "data*"]
+
+[tool.setuptools.package-data]
+pivot_ai = ["trackers/*.yaml"]
 
 [tool.ruff]
 line-length = 100

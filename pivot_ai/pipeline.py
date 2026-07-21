@@ -23,7 +23,7 @@ from pivot_ai.stats import (
     calculer_largeur_bloc_defensif,
     calculer_stats_joueur,
 )
-from pivot_ai.tracking import tracker_detections
+from pivot_ai.tracking import tracker_detections, tracker_video_botsort
 
 logger = logging.getLogger(__name__)
 
@@ -439,6 +439,7 @@ def traiter_match_complet(
     terrain_config: TerrainConfig | None = None,
     batch_size: int = 8,
     min_frames_track: int = 0,
+    tracker: str = "bytetrack",
 ) -> ResultatPipeline:
     """Pipeline complet : video -> stats + clips d'actions + video radar SBS.
 
@@ -457,6 +458,9 @@ def traiter_match_complet(
         min_frames_track: filtre les trackers vus sur moins de N frames reelles
             (fragments). 0 desactive le filtre. Recommande ~8-12 en production
             pour ne garder que les trajectoires exploitables.
+        tracker: backend de tracking. "bytetrack" (defaut, rapide, mouvement
+            seul) ou "botsort" (ReID par apparence : maintient les IDs au
+            contact/occlusion, plus lent, necessite un vrai modele YOLO).
 
     Returns:
         ResultatPipeline avec tous les artefacts produits.
@@ -494,14 +498,24 @@ def traiter_match_complet(
     if detecteur is None:
         from pivot_ai.detection import DetecteurLocal
         detecteur = DetecteurLocal(modele_config)
-    detections_par_frame = detecter_video(
-        chemin_source, detecteur, subsample=subsample, batch_size=batch_size
-    )
 
-    # 4. Tracking (framerate corrige du subsample pour le modele de mouvement)
-    detections_trackees, classe_finale = tracker_detections(
-        detections_par_frame, fps=fps, subsample=subsample
-    )
+    # 3-4. Detection + tracking selon le backend choisi
+    if tracker == "botsort":
+        # BoT-SORT + ReID : detection et tracking couples (model.track stateful).
+        detections_trackees, classe_finale = tracker_video_botsort(
+            chemin_source, detecteur, subsample=subsample
+        )
+    elif tracker == "bytetrack":
+        detections_par_frame = detecter_video(
+            chemin_source, detecteur, subsample=subsample, batch_size=batch_size
+        )
+        detections_trackees, classe_finale = tracker_detections(
+            detections_par_frame, fps=fps, subsample=subsample
+        )
+    else:
+        raise ValueError(
+            f"tracker inconnu : {tracker!r} (attendu 'bytetrack' ou 'botsort')"
+        )
 
     # 5. Equipes (necessite les frames echantillonnees pour extraire les couleurs)
     frames_echantillonnees = _extraire_frames_indexees(
@@ -598,6 +612,7 @@ def traiter_match_complet(
         "homographie_methode": homographie.methode,
         "homographie_nb_points": homographie.nb_points,
         "cluster_mhb": cluster_mhb,
+        "tracker": tracker,
         "nb_trackers_total": len(classe_finale),
         "nb_joueurs_classes": len(equipe_finale),
         "min_frames_track": min_frames_track,

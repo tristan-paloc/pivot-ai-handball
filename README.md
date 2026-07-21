@@ -83,7 +83,8 @@ Le repo est **public** : le clone HTTPS depuis Colab fonctionne en anonyme, aucu
 
 - **Quota T4 gratuit** : environ 12h cumulees sur 24h, degradation au-dela de 15h. Si tu travailles intensivement, planifie ta journee.
 - **Mount Drive** : token unique par session. Si Colab te deconnecte, il faudra re-mount (cellule 3 du notebook).
-- **Premier `pip install`** : 3-5 minutes (ultralytics + torch + opencv + supervision + scipy). Les installs suivants utilisent le cache pip de la VM.
+- **Premier `pip install`** : le notebook installe les deps runtime seulement (`pip install -e .`, sans `[dev]`) pour eviter les conflits de versions avec les paquets Colab. Compter 1-3 min la 1ere fois, quasi instantane ensuite (cache pip de la VM).
+- **Lancement** : `Execution > Tout executer`. Le seul geste manuel est d'autoriser le mount Drive quand il le demande. La calibration homographie est persistee sur Drive (`correspondances.json`), donc a saisir une seule fois.
 - **Estimation temps de traitement** : un match 60min @ 25fps avec `subsample=3` (1 frame sur 3) genere ~30k inferences, soit ~20 min sur T4. Le notebook affiche une estimation avant lancement.
 - **VRAM** : 15 Go sur T4 gratuit, suffisant pour YOLOv8m batch 1. Si OOM, passer en CPU (`device="cpu"` dans `ModeleConfig`, beaucoup plus lent).
 - **Pin `supervision<0.30`** : `sv.ByteTrack` est deprecated depuis 0.28 et sera supprime en 0.30. Le `pyproject.toml` pin la version pour eviter les surprises. Migration ByteTrack -> nouveau tracker = dette technique pour un sprint futur.

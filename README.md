@@ -38,6 +38,38 @@ pivot-ai-handball/
 
 3. Tes videos doivent etre dans `/MyDrive/PIVOT_AI/raw_clips/`.
 
+## Modele de detection : COCO generique vs fine-tune handball
+
+Par defaut, le pipeline utilise **YOLOv8m pre-entraine COCO** : il ne connait que la classe
+generique "person". Consequence : pas de distinction joueur / gardien / arbitre / ballon, et un
+tracking fragmente (beaucoup d'IDs pour peu de joueurs reels) car les detections sont bruitees.
+
+Pour un vrai saut de qualite, **entraine un modele specialise handball** :
+
+1. Ouvre `notebooks/train_handball_yolo.ipynb` sur Colab (T4 GPU).
+2. Cree un compte [Roboflow](https://roboflow.com) gratuit, recupere ta cle API
+   ([app.roboflow.com/settings/api](https://app.roboflow.com/settings/api)) et ajoute-la aux
+   Secrets Colab sous le nom `ROBOFLOW_API_KEY`.
+3. Le notebook telecharge le dataset
+   [handball-detection-fj8rc](https://universe.roboflow.com/handballdetectionvictorcollado/handball-detection-fj8rc)
+   (4 classes players/goalkeeper/referees/ball), fine-tune un YOLOv8m, affiche les mAP et exporte
+   `best.pt` vers `/MyDrive/PIVOT_AI/models/handball_yolov8m.pt`.
+4. Dans le notebook d'inference, la cellule "Modele de detection" detecte automatiquement ce fichier
+   et l'utilise via `ModeleConfig.pour_handball(...)`.
+
+Le pipeline remappe les classes du modele vers `CLASSES_HANDBALL` **par nom** (pas par ordre), donc
+peu importe l'ordre des classes dans le dataset d'entrainement.
+
+En local / CLI, pointe le modele explicitement :
+
+```python
+from pivot_ai.config import ModeleConfig
+from pivot_ai.pipeline import traiter_match_complet
+
+config = ModeleConfig.pour_handball("models/handball_yolov8m.pt")
+traiter_match_complet(..., modele_config=config)
+```
+
 ### Authentification GitHub
 
 Le repo est **public** : le clone HTTPS depuis Colab fonctionne en anonyme, aucun token requis.
@@ -130,6 +162,9 @@ Tests qui requierent `ffmpeg` (3 tests de decoupage video) : auto-skip si `ffmpe
 - [x] Pipeline match complet (avec interpolation et video SBS)
 - [x] CLI `pivot-ai traiter`
 - [x] Notebook Colab end-to-end
+- [x] Fine-tune modele YOLO handball (4 classes) + notebook d'entrainement
+- [ ] Detection ballon -> possession et passes
+- [ ] Detection d'evenements (tirs, buts) par heuristique
 - [ ] Migration `sv.ByteTrack` vers le nouveau tracker supervision (`>=0.30`)
 - [ ] Determination automatique de l'equipe en attaque (sens de jeu)
 - [ ] Detection automatique lignes terrain (homographie auto)

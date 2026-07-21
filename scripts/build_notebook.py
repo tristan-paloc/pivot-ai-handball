@@ -162,7 +162,29 @@ CELLULES = [
         "print(f\"{len(correspondances)} correspondances renseignees\")"
     ),
     md(
-        "## 5. Test rapide sur clip court\n"
+        "## 5. Modele de detection\n"
+        "\n"
+        "Par defaut le pipeline utilise **YOLOv8m COCO** (detecte des 'person' generiques,\n"
+        "tracking fragmente). Si tu as entraine un modele handball via\n"
+        "`notebooks/train_handball_yolo.ipynb`, pointe dessus : il distingue\n"
+        "joueurs / gardiens / arbitres / ballon et reduit fortement la fragmentation."
+    ),
+    code(
+        "import os\n"
+        "from pivot_ai.config import ModeleConfig\n"
+        "\n"
+        "CHEMIN_MODELE_HANDBALL = \"/content/drive/MyDrive/PIVOT_AI/models/handball_yolov8m.pt\"\n"
+        "\n"
+        "if os.path.exists(CHEMIN_MODELE_HANDBALL):\n"
+        "    modele_config = ModeleConfig.pour_handball(CHEMIN_MODELE_HANDBALL)\n"
+        "    print(f\"Modele handball fine-tune : {CHEMIN_MODELE_HANDBALL}\")\n"
+        "else:\n"
+        "    modele_config = None  # -> ModeleConfig() par defaut (YOLOv8m COCO)\n"
+        "    print(\"Modele handball absent : fallback YOLOv8m COCO (tracking fragmente attendu).\")\n"
+        "    print(\"Entraine-le via notebooks/train_handball_yolo.ipynb pour de meilleurs resultats.\")"
+    ),
+    md(
+        "## 6. Test rapide sur clip court\n"
         "\n"
         "Avant le pipeline complet, on lance une passe rapide pour valider l'enchainement :\n"
         "- subsample agressif (1 frame sur 5)\n"
@@ -184,6 +206,7 @@ CELLULES = [
         "    subsample=5,\n"
         "    generer_video_radar=False,\n"
         "    decouper_actions=False,\n"
+        "    modele_config=modele_config,\n"
         ")\n"
         "duree = time.time() - t0\n"
         "\n"
@@ -195,7 +218,7 @@ CELLULES = [
         "print(resultat_test.stats_joueurs.head(10))"
     ),
     md(
-        "## 6. Pipeline complet\n"
+        "## 7. Pipeline complet\n"
         "\n"
         "Avec `subsample=2` (1 frame sur 2), on a une bonne qualite de tracking pour ~1500 inferences/min sur T4.\n"
         "\n"
@@ -222,6 +245,7 @@ CELLULES = [
         "    subsample=2,\n"
         "    generer_video_radar=True,\n"
         "    decouper_actions=True,\n"
+        "    modele_config=modele_config,\n"
         ")\n"
         "duree_min = (time.time() - t0) / 60\n"
         "\n"
@@ -244,7 +268,7 @@ CELLULES = [
         "print(f\"  Parquet : {OUTPUTS_DIR}/stats_joueurs.parquet\")\n"
         "print(f\"  Video radar SBS : {resultat.chemin_video_radar}\")"
     ),
-    md("## 7. Visualiser quelques frames du rendu final"),
+    md("## 8. Visualiser quelques frames du rendu final"),
     code(
         "import matplotlib.pyplot as plt\n"
         "\n"
@@ -265,7 +289,7 @@ CELLULES = [
         "plt.show()"
     ),
     md(
-        "## 8. Heatmap d'un joueur\n"
+        "## 9. Heatmap d'un joueur\n"
         "\n"
         "Visualise la densite de presence d'un joueur sur le terrain. On prend par defaut le tracker le plus present."
     ),
@@ -297,7 +321,7 @@ CELLULES = [
         "fig.show()"
     ),
     md(
-        "## 9. Largeur du bloc defensif au cours du temps\n"
+        "## 10. Largeur du bloc defensif au cours du temps\n"
         "\n"
         "Charge le DataFrame de la largeur du bloc defensif (MHB ou ADV) et le trace via plotly."
     ),

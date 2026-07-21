@@ -114,6 +114,10 @@ pivot-ai traiter \
 Flags optionnels :
 - `--no-video-radar` : ne genere pas la video SBS broadcast+radar
 - `--no-decoupage` : ne decoupe pas les actions detectees
+- `--tracker {bytetrack,botsort}` : backend de tracking. `bytetrack` (defaut,
+  rapide, mouvement seul) ou `botsort` (ReID par apparence : maintient les IDs
+  au contact/occlusion, plus lent). `botsort` necessite un vrai modele YOLO.
+- `--min-frames-track N` : ecarte les trackers vus sur moins de N frames (fragments)
 
 Codes de sortie :
 - `0` : succes
@@ -164,6 +168,7 @@ Tests qui requierent `ffmpeg` (3 tests de decoupage video) : auto-skip si `ffmpe
 - [x] CLI `pivot-ai traiter`
 - [x] Notebook Colab end-to-end
 - [x] Fine-tune modele YOLO handball (4 classes) + notebook d'entrainement
+- [x] Tracker BoT-SORT + ReID (maintient les IDs au contact) en option
 - [ ] Detection ballon -> possession et passes
 - [ ] Detection d'evenements (tirs, buts) par heuristique
 - [ ] Migration `sv.ByteTrack` vers le nouveau tracker supervision (`>=0.30`)

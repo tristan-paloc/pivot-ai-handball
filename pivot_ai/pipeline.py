@@ -17,6 +17,7 @@ from pivot_ai.decoupage import Action, decouper_clips_video, detecter_actions
 from pivot_ai.detection import detecter_video
 from pivot_ai.equipes import classifier_equipes
 from pivot_ai.homographie import Correspondance, Homographie, calibrer_homographie
+from pivot_ai.metriques import resumer_qualite_tracking
 from pivot_ai.radar import dessiner_radar
 from pivot_ai.stats import (
     PositionJoueur,
@@ -536,8 +537,12 @@ def traiter_match_complet(
         terrain_config=config,
     )
 
-    # 6bis. Filtre des fragments courts (traine de tracks ephemeres)
+    # 6bis. KPI qualite tracking (sur positions AVANT filtre : c'est la que
+    # vit la fragmentation / les reprises d'ID)
     nb_trackers_avant_filtre = len(positions_par_tracker)
+    qualite = resumer_qualite_tracking(positions_par_tracker)
+
+    # 6ter. Filtre des fragments courts (traine de tracks ephemeres)
     positions_par_tracker = filtrer_traceurs_courts(
         positions_par_tracker, min_frames=min_frames_track
     )
@@ -618,6 +623,9 @@ def traiter_match_complet(
         "min_frames_track": min_frames_track,
         "nb_joueurs_avant_filtre": nb_trackers_avant_filtre,
         "nb_joueurs_stats": len(positions_par_tracker),
+        "nb_reprises_id": qualite.nb_reprises_id,
+        "nb_joueurs_estimes": qualite.nb_joueurs_estimes,
+        "longueur_track_moyenne": round(qualite.longueur_track_moyenne, 1),
         "nb_actions_detectees": len(actions),
     }
     logger.info("Pipeline termine. Metadonnees : %s", metadonnees)

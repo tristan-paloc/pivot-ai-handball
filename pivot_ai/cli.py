@@ -100,6 +100,14 @@ def _logger_recap(resultat: ResultatPipeline, dossier_sortie: Path) -> None:
                 resultat.metadonnees.get("nb_trackers_total", 0))
     logger.info("Nb joueurs classes en equipe : %d",
                 resultat.metadonnees.get("nb_joueurs_classes", 0))
+    logger.info("--- Qualite tracking (%s) ---",
+                resultat.metadonnees.get("tracker", "?"))
+    logger.info("Reprises d'ID (switches suspectes) : %d",
+                resultat.metadonnees.get("nb_reprises_id", 0))
+    logger.info("Joueurs estimes (apres recollage) : %d",
+                resultat.metadonnees.get("nb_joueurs_estimes", 0))
+    logger.info("Joueurs exploitables (apres filtre) : %d",
+                resultat.metadonnees.get("nb_joueurs_stats", 0))
     if resultat.chemin_video_radar is not None:
         logger.info("Video radar SBS : %s", resultat.chemin_video_radar)
     else:

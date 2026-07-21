@@ -13,9 +13,21 @@ import cv2
 import numpy as np
 import supervision as sv
 
-from pivot_ai.config import ModeleConfig
+from pivot_ai.config import ModeleConfig, construire_remap_classes
 
 logger = logging.getLogger(__name__)
+
+
+def _appliquer_remap(dets: sv.Detections, remap: dict[int, int]) -> sv.Detections:
+    """Remappe les class_id d'un Detections et ecarte les classes inconnues."""
+    if dets.class_id is None or len(dets) == 0:
+        return dets
+    garder = np.array([int(c) in remap for c in dets.class_id], dtype=bool)
+    dets = dets[garder]
+    if len(dets) == 0 or dets.class_id is None:
+        return dets
+    dets.class_id = np.array([remap[int(c)] for c in dets.class_id], dtype=int)
+    return dets
 
 
 class DetecteurLocal:
@@ -33,9 +45,35 @@ class DetecteurLocal:
         chemin = Path(self.config.chemin_modele)
         logger.info("Chargement modele YOLO depuis %s (device=%s)", chemin, self.config.device)
         self.model = YOLO(str(chemin))
+
+        # Remap eventuel des class_id du modele vers CLASSES_HANDBALL (par nom).
+        self.remap_classes: dict[int, int] | None = None
+        if self.config.remapper_vers_classes_handball:
+            noms = dict(self.model.names)  # {id: nom}
+            self.remap_classes = construire_remap_classes(noms)
+            if not self.remap_classes:
+                logger.warning(
+                    "Remap handball active mais aucun nom de classe du modele ne "
+                    "matche CLASSES_HANDBALL (noms=%s). Detections passees telles quelles.",
+                    noms,
+                )
+            else:
+                logger.info(
+                    "Remap classes modele -> handball : %s (noms modele : %s)",
+                    self.remap_classes,
+                    noms,
+                )
+
         # Warmup : premiere inference est lente (compilation CUDA kernels)
         dummy = np.zeros((640, 640, 3), dtype=np.uint8)
         self.model.predict(dummy, verbose=False, device=self.config.device)
+
+    @property
+    def _classes_predict(self) -> list[int] | None:
+        """Liste des classes a passer a predict (None = toutes)."""
+        if self.config.classes_a_garder is None:
+            return None
+        return list(self.config.classes_a_garder)
 
     def detecter(self, frame: np.ndarray) -> sv.Detections:
         """Detecte les objets dans une frame BGR.
@@ -50,7 +88,7 @@ class DetecteurLocal:
             frame,
             conf=self.config.confiance_min,
             iou=self.config.iou_min,
-            classes=list(self.config.classes_a_garder),
+            classes=self._classes_predict,
             verbose=False,
             device=self.config.device,
         )
@@ -58,7 +96,10 @@ class DetecteurLocal:
             return sv.Detections.empty()
 
         # supervision sait parser directement les resultats Ultralytics
-        return sv.Detections.from_ultralytics(results[0])
+        dets = sv.Detections.from_ultralytics(results[0])
+        if self.remap_classes:
+            dets = _appliquer_remap(dets, self.remap_classes)
+        return dets
 
     def detecter_batch(self, frames: list[np.ndarray]) -> list[sv.Detections]:
         """Detecte sur un batch de frames (plus rapide qu'en boucle)."""
@@ -66,11 +107,14 @@ class DetecteurLocal:
             frames,
             conf=self.config.confiance_min,
             iou=self.config.iou_min,
-            classes=list(self.config.classes_a_garder),
+            classes=self._classes_predict,
             verbose=False,
             device=self.config.device,
         )
-        return [sv.Detections.from_ultralytics(r) for r in results]
+        detections = [sv.Detections.from_ultralytics(r) for r in results]
+        if self.remap_classes:
+            detections = [_appliquer_remap(d, self.remap_classes) for d in detections]
+        return detections
 
 
 def detecter_video(

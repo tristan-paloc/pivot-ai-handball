@@ -112,15 +112,94 @@ POINTS_TERRAIN_M: dict[str, tuple[float, float]] = {
 
 @dataclass(frozen=True)
 class ModeleConfig:
-    """Configuration du modele de detection."""
+    """Configuration du modele de detection.
 
-    # Modele par defaut : YOLOv8 medium COCO (fallback generique)
-    # A remplacer par un modele fine-tune handball une fois entraine.
+    Deux usages :
+    - COCO generique (defaut) : `classes_a_garder=(0,)` garde la classe person,
+      pas de remap (les noms COCO ne matchent pas CLASSES_HANDBALL).
+    - Modele fine-tune handball : utiliser `ModeleConfig.pour_handball(chemin)`.
+      Les class_id du modele sont remappes vers CLASSES_HANDBALL par nom, ce qui
+      rend le pipeline robuste a l'ordre des classes du dataset d'entrainement.
+    """
+
     chemin_modele: str = "yolov8m.pt"
     confiance_min: float = 0.35
     iou_min: float = 0.5
-    classes_a_garder: tuple[int, ...] = (0,)  # 0 = person en COCO
+    # None = garder toutes les classes detectees par le modele.
+    classes_a_garder: tuple[int, ...] | None = (0,)  # 0 = person en COCO
     device: str = "cuda"  # "cuda", "cpu", ou "mps" sur Mac
+    # Si True, DetecteurLocal remappe les class_id du modele vers CLASSES_HANDBALL
+    # via les noms de classes (model.names). Les classes inconnues sont ecartees.
+    remapper_vers_classes_handball: bool = False
+
+    @classmethod
+    def pour_handball(
+        cls,
+        chemin_modele: str,
+        confiance_min: float = 0.35,
+        iou_min: float = 0.5,
+        device: str = "cuda",
+    ) -> ModeleConfig:
+        """Config pour un modele fine-tune handball (4 classes players/gk/ref/ball).
+
+        Garde toutes les classes du modele et active le remap par nom vers
+        CLASSES_HANDBALL.
+
+        Args:
+            chemin_modele: chemin vers le .pt fine-tune handball
+            confiance_min: seuil de confiance
+            iou_min: seuil IoU NMS
+            device: "cuda", "cpu" ou "mps"
+
+        Returns:
+            ModeleConfig prete pour l'inference handball.
+        """
+        return cls(
+            chemin_modele=chemin_modele,
+            confiance_min=confiance_min,
+            iou_min=iou_min,
+            classes_a_garder=None,
+            device=device,
+            remapper_vers_classes_handball=True,
+        )
+
+
+def _normaliser_nom_classe(nom: str) -> str:
+    """Normalise un nom de classe pour matching robuste (casse, pluriel, espaces)."""
+    n = nom.strip().lower().replace("_", " ").replace("-", " ").strip()
+    # Singularise un eventuel pluriel simple (players -> player, referees -> referee).
+    if n.endswith("s") and len(n) > 1:
+        n = n[:-1]
+    return n
+
+
+def construire_remap_classes(
+    noms_modele: dict[int, str],
+    classes_cibles: dict[str, int] | None = None,
+) -> dict[int, int]:
+    """Construit le mapping class_id modele -> class_id canonique par nom.
+
+    Permet d'utiliser un modele dont l'ordre des classes differe de
+    CLASSES_HANDBALL (ex : export Roboflow alphabetique ball/goalkeeper/
+    players/referees) sans casser le code aval qui raisonne en ids canoniques.
+
+    Args:
+        noms_modele: dict class_id -> nom, typiquement `model.names` d'Ultralytics
+        classes_cibles: mapping nom -> id canonique (defaut : CLASSES_HANDBALL)
+
+    Returns:
+        dict class_id_modele -> class_id_canonique, uniquement pour les classes
+        dont le nom matche une cible. Les classes non reconnues sont absentes.
+    """
+    cibles = classes_cibles if classes_cibles is not None else CLASSES_HANDBALL
+    cibles_normalisees = {_normaliser_nom_classe(nom): idx for nom, idx in cibles.items()}
+
+    remap: dict[int, int] = {}
+    for cid_modele, nom in noms_modele.items():
+        cle = _normaliser_nom_classe(nom)
+        if cle in cibles_normalisees:
+            remap[int(cid_modele)] = cibles_normalisees[cle]
+    return remap
 
 
 # ----------------------------------------------------------------------------

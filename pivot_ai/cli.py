@@ -203,6 +203,7 @@ def commande_benchmark(args: argparse.Namespace) -> int:
             modele_config=modele_config,
             subsample=args.subsample,
             generer_videos=not args.no_video,
+            detecter_coupures=not args.sans_coupures,
         )
     except Exception:
         logger.exception("Echec du benchmark")
@@ -303,6 +304,11 @@ def construire_parser() -> argparse.ArgumentParser:
     p_bench.add_argument(
         "--no-video", action="store_true", dest="no_video",
         help="Ne pas generer les videos annotees (metriques seules)",
+    )
+    p_bench.add_argument(
+        "--sans-coupures", action="store_true", dest="sans_coupures",
+        help="Considerer le clip comme un plan continu (aucune coupure) : "
+             "toute rupture d'ID compte alors comme un vrai probleme de tracking.",
     )
     p_bench.set_defaults(func=commande_benchmark)
 

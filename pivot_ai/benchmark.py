@@ -91,6 +91,22 @@ def bornes_pixels(
 
 
 @dataclass
+class RepriseDetail:
+    """Une reprise d'ID datee et diagnostiquee (sans annotation manuelle)."""
+
+    tracker_a: int
+    tracker_b: int
+    seconde: float
+    x: float
+    y: float
+    gap_frames: int
+    cause: str  # "detection" (trou de detection) | "tracker" (association)
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
 class ResumeBenchmark:
     """Metriques de continuite d'ID pour un run (clip x tracker)."""
 
@@ -99,6 +115,8 @@ class ResumeBenchmark:
     nb_tracks: int = 0
     nb_joueurs_estimes: int = 0
     nb_reprises_id: int = 0
+    nb_reprises_cause_detection: int = 0
+    nb_reprises_cause_tracker: int = 0
     nb_fragments_courts: int = 0
     fragmentation: float = 0.0
     longueur_moyenne_frames: float = 0.0
@@ -107,9 +125,74 @@ class ResumeBenchmark:
     longueur_moyenne_s: float = 0.0
     nb_coupures_plan: int = 0
     frames_coupure: list[int] = field(default_factory=list)
+    reprises_detail: list[dict] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+def _detection_proche(
+    dets: sv.Detections | None, x: float, y: float, seuil_px: float
+) -> bool:
+    """True s'il existe une detection (n'importe quel ID) proche de (x, y)."""
+    if dets is None or len(dets) == 0:
+        return False
+    for i in range(len(dets)):
+        cx, cy = _centre_bbox(dets.xyxy[i])
+        if (cx - x) ** 2 + (cy - y) ** 2 <= seuil_px ** 2:
+            return True
+    return False
+
+
+def detailler_reprises(
+    detections_trackees: dict[int, sv.Detections],
+    bornes: dict[int, BornesTrack],
+    reprises: list[tuple[int, int]],
+    fps: float,
+    seuil_px: float,
+) -> list[RepriseDetail]:
+    """Date chaque reprise et diagnostique sa cause (detection vs tracker).
+
+    Pendant le trou entre la fin de A et le debut de B, on regarde si le
+    detecteur voyait encore quelqu'un pres de la derniere position de A :
+    - vu -> l'objet etait la mais l'ID a change : cause "tracker" (association) ;
+    - jamais vu -> l'objet avait disparu des detections : cause "detection".
+
+    Args:
+        detections_trackees: dict frame -> Detections.
+        bornes: bornes par tracker_id (positions debut/fin).
+        reprises: couples (A, B) issus de detecter_reprises_bornes.
+        fps: framerate reel (pour l'horodatage).
+        seuil_px: rayon de proximite.
+
+    Returns:
+        liste de RepriseDetail, triee par seconde croissante.
+    """
+    frames_analysees = sorted(detections_trackees.keys())
+    details: list[RepriseDetail] = []
+    for a, b in reprises:
+        ba, bb = bornes.get(a), bornes.get(b)
+        if ba is None or bb is None:
+            continue
+        frames_trou = [f for f in frames_analysees if ba.frame_fin < f < bb.frame_debut]
+        vu_pendant_trou = any(
+            _detection_proche(detections_trackees.get(f), ba.x_fin, ba.y_fin, seuil_px)
+            for f in frames_trou
+        )
+        # Trou sans frame intermediaire = IDs changes sur des frames adjacentes
+        # (l'objet etait detecte) -> faute d'association tracker.
+        cause = "tracker" if (vu_pendant_trou or not frames_trou) else "detection"
+        details.append(
+            RepriseDetail(
+                tracker_a=a, tracker_b=b,
+                seconde=round(ba.frame_fin / fps, 2) if fps > 0 else 0.0,
+                x=round(ba.x_fin, 1), y=round(ba.y_fin, 1),
+                gap_frames=bb.frame_debut - ba.frame_fin,
+                cause=cause,
+            )
+        )
+    details.sort(key=lambda d: d.seconde)
+    return details
 
 
 def _percentile(valeurs: list[float], q: float) -> float:
@@ -162,6 +245,7 @@ def resume_benchmark(
         bornes, seuil_distance_px, seuil_frames, tuple(frames_coupure)
     )
     nb_joueurs = composantes_connexes(list(bornes.keys()), reprises)
+    details = detailler_reprises(detections_trackees, bornes, reprises, fps, seuil_distance_px)
 
     # Duree reelle couverte par une frame trackee = subsample / fps.
     sec_par_frame_trackee = subsample / fps if fps > 0 else 0.0
@@ -173,6 +257,8 @@ def resume_benchmark(
         nb_tracks=nb_tracks,
         nb_joueurs_estimes=nb_joueurs,
         nb_reprises_id=len(reprises),
+        nb_reprises_cause_detection=sum(1 for d in details if d.cause == "detection"),
+        nb_reprises_cause_tracker=sum(1 for d in details if d.cause == "tracker"),
         nb_fragments_courts=sum(1 for n in longueurs if n < min_frames_fragment),
         fragmentation=round(nb_tracks / max(1, nb_joueurs), 2),
         longueur_moyenne_frames=round(moy, 1),
@@ -181,6 +267,7 @@ def resume_benchmark(
         longueur_moyenne_s=round(moy * sec_par_frame_trackee, 2),
         nb_coupures_plan=len(frames_coupure),
         frames_coupure=list(frames_coupure),
+        reprises_detail=[d.as_dict() for d in details],
     )
 
 
@@ -239,6 +326,7 @@ def lancer_benchmark(
     seuil_frames: int | None = None,
     min_frames_fragment: int = 5,
     generer_videos: bool = True,
+    detecter_coupures: bool = True,
 ) -> list[RunBenchmark]:
     """Lance le benchmark de continuite d'ID sur chaque (clip x tracker).
 
@@ -269,8 +357,15 @@ def lancer_benchmark(
         fps, largeur, _hauteur = _metadonnees_video(clip)
         s_px = seuil_distance_px if seuil_distance_px is not None else 0.08 * largeur
         s_fr = seuil_frames if seuil_frames is not None else int(round(fps))  # ~1 s
-        coupures = tuple(detecter_changements_plan(clip, subsample=subsample))
-        logger.info("Clip %s : %.1f fps, %d coupure(s)", nom_clip, fps, len(coupures))
+        coupures = (
+            tuple(detecter_changements_plan(clip, subsample=subsample))
+            if detecter_coupures else ()
+        )
+        logger.info(
+            "Clip %s : %.1f fps, %d coupure(s)%s",
+            nom_clip, fps, len(coupures),
+            "" if detecter_coupures else " (detection desactivee : plan continu)",
+        )
 
         for tracker in trackers:
             fn = fonction_tracking or (
@@ -306,7 +401,8 @@ def ecrire_comparatif(runs: list[RunBenchmark], sortie: str | Path) -> tuple[Pat
 
     chemin_csv = sortie / "comparatif.csv"
     if lignes:
-        colonnes = [c for c in lignes[0] if c != "frames_coupure"]
+        exclues = {"frames_coupure", "reprises_detail"}
+        colonnes = [c for c in lignes[0] if c not in exclues]
         with chemin_csv.open("w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=colonnes, extrasaction="ignore")
             w.writeheader()
@@ -321,15 +417,16 @@ def ecrire_rapport(runs: list[RunBenchmark], sortie: str | Path) -> Path:
 
     entete = (
         "| clip | tracker | tracks | joueurs est. | reprises ID | "
-        "fragments courts | fragmentation | long. moy (s) | coupures |"
+        "dont detection | dont tracker | fragmentation | long. moy (s) | coupures |"
     )
-    sep = "|" + "---|" * 9
+    sep = "|" + "---|" * 10
     lignes += [entete, sep]
     for r in runs:
         m = r.resume
         lignes.append(
             f"| {m.clip} | {m.tracker} | {m.nb_tracks} | {m.nb_joueurs_estimes} | "
-            f"{m.nb_reprises_id} | {m.nb_fragments_courts} | {m.fragmentation} | "
+            f"{m.nb_reprises_id} | {m.nb_reprises_cause_detection} | "
+            f"{m.nb_reprises_cause_tracker} | {m.fragmentation} | "
             f"{m.longueur_moyenne_s} | {m.nb_coupures_plan} |"
         )
 
@@ -349,12 +446,38 @@ def ecrire_rapport(runs: list[RunBenchmark], sortie: str | Path) -> Path:
         )
         for tr, resumes in classement:
             tot_rep = sum(x.nb_reprises_id for x in resumes)
-            lignes.append(f"  - `{tr}` : {tot_rep} reprises d'ID cumulees sur {len(resumes)} clip(s).")
+            tot_det = sum(x.nb_reprises_cause_detection for x in resumes)
+            tot_trk = sum(x.nb_reprises_cause_tracker for x in resumes)
+            part = f" (detection {tot_det} / tracker {tot_trk})" if tot_rep else ""
+            lignes.append(
+                f"  - `{tr}` : {tot_rep} reprises d'ID cumulees sur {len(resumes)} clip(s){part}."
+            )
+
+    # Principales ruptures datees, par run.
+    lignes.append("\n## Principales ruptures (timestamps + cause)\n")
+    for r in runs:
+        m = r.resume
+        lignes.append(f"### {m.clip} — `{m.tracker}`")
+        if not m.reprises_detail:
+            lignes.append("Aucune reprise d'ID detectee.\n")
+            continue
+        lignes.append("| t (s) | ID | -> ID | trou (frames) | cause |")
+        lignes.append("|---|---|---|---|---|")
+        for d in m.reprises_detail[:12]:
+            lignes.append(
+                f"| {d['seconde']} | {d['tracker_a']} | {d['tracker_b']} | "
+                f"{d['gap_frames']} | {d['cause']} |"
+            )
+        if len(m.reprises_detail) > 12:
+            lignes.append(f"| ... | | | | +{len(m.reprises_detail) - 12} autres |")
+        lignes.append("")
 
     lignes.append(
-        "\n> Part detection vs tracker et taux de recuperation d'ID sur occlusions "
-        "brefs : voir les metriques de verite terrain (etape 3) — non calculables "
-        "sans annotation des joueurs de reference.\n"
+        "\n> Cause estimee automatiquement : pendant le trou, si le detecteur voyait "
+        "encore quelqu'un pres de la derniere position -> **tracker** (association) ; "
+        "sinon -> **detection**. La verite terrain (annotation de quelques joueurs) "
+        "reste utile pour valider finement, mais la repartition ci-dessus ne la "
+        "necessite pas.\n"
     )
 
     chemin = sortie / "RAPPORT.md"

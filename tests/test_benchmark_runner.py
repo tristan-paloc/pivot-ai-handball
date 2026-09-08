@@ -113,6 +113,20 @@ def test_lancer_benchmark_avec_tracking_injecte(tmp_path: Path) -> None:
     assert par_tracker["bytetrack"].nb_tracks >= par_tracker["botsort"].nb_tracks
 
 
+def test_benchmark_sans_coupures(tmp_path: Path) -> None:
+    """detecter_coupures=False : plan continu, aucune coupure n'est comptee."""
+    source = tmp_path / "continu.mp4"
+    generer_video_factice(source, nb_frames=20, fps=50.0, largeur=640, hauteur=360)
+    runs = lancer_benchmark(
+        clips=[source], trackers=["bytetrack"], sortie=tmp_path / "b",
+        fonction_tracking=lambda c, t, s, f: _tracking_synthetique(20),
+        subsample=2, seuil_distance_px=120.0, seuil_frames=30,
+        generer_videos=False, detecter_coupures=False,
+    )
+    assert runs[0].resume.nb_coupures_plan == 0
+    assert runs[0].resume.frames_coupure == []
+
+
 def test_ecrire_comparatif_json_valide(tmp_path: Path) -> None:
     """comparatif.json est un JSON de la bonne forme."""
     source = tmp_path / "evt.mp4"

@@ -37,12 +37,17 @@ CELLULES = [
     md(
         "# Benchmark continuite d'identite (tracking)\n"
         "\n"
-        "Compare **ByteTrack** vs **BoT-SORT + ReID** sur des clips handball, avec le\n"
-        "modele fine-tune. Produit : videos annotees (IDs colores + coupures de plan),\n"
-        "`comparatif.csv/json` et `RAPPORT.md`.\n"
+        "Compare **ByteTrack** vs **BoT-SORT + ReID** sur un clip handball **plan\n"
+        "continu** (`MHB_Chartres_test_1min.mp4`, ~1 min, sans changement de camera),\n"
+        "avec le modele fine-tune. On lance avec `--sans-coupures` : le clip est traite\n"
+        "comme un seul plan, donc **toute rupture d'ID compte comme un vrai probleme de\n"
+        "tracking**.\n"
         "\n"
-        "**Prerequis** : runtime **T4 GPU**, et les 3 clips deposes sur Drive dans\n"
-        "`/MyDrive/PIVOT_AI/benchmark/`."
+        "Produit : videos annotees (IDs colores), `comparatif.csv/json` et `RAPPORT.md`\n"
+        "(timestamps des ruptures + cause estimee detection vs tracker).\n"
+        "\n"
+        "**Prerequis** : runtime **T4 GPU**, et le clip depose sur Drive dans\n"
+        "`/MyDrive/PIVOT_AI/benchmark_1min/`."
     ),
     md("## 1. Clone (branche benchmark) + install"),
     code(
@@ -86,8 +91,8 @@ CELLULES = [
         "from google.colab import drive\n"
         "drive.mount('/content/drive', force_remount=False)\n"
         "\n"
-        "DOSSIER_CLIPS  = \"/content/drive/MyDrive/PIVOT_AI/benchmark\"\n"
-        "DOSSIER_SORTIE = \"/content/drive/MyDrive/PIVOT_AI/benchmark_out\"\n"
+        "DOSSIER_CLIPS  = \"/content/drive/MyDrive/PIVOT_AI/benchmark_1min\"\n"
+        "DOSSIER_SORTIE = \"/content/drive/MyDrive/PIVOT_AI/benchmark_1min_out\"\n"
         "MODELE         = \"/content/drive/MyDrive/PIVOT_AI/models/handball_yolov8m.pt\"\n"
         "\n"
         "assert os.path.isdir(DOSSIER_CLIPS), f\"Depose les clips dans {DOSSIER_CLIPS}\"\n"
@@ -97,13 +102,14 @@ CELLULES = [
     md(
         "## 4. Lancer le benchmark\n"
         "\n"
-        "ByteTrack vs BoT-SORT sur les 3 clips. Compter quelques minutes sur T4\n"
-        "(BoT-SORT/ReID est le plus lent)."
+        "ByteTrack vs BoT-SORT sur le clip. `--sans-coupures` = plan continu :\n"
+        "aucune coupure detectee, chaque rupture d'ID est un vrai probleme de tracking.\n"
+        "Compter quelques minutes sur T4 (BoT-SORT/ReID est le plus lent)."
     ),
     code(
         "!python -m pivot_ai.cli benchmark --clips {DOSSIER_CLIPS} "
         "--sortie {DOSSIER_SORTIE} --modele {MODELE} "
-        "--trackers bytetrack,botsort --subsample 2"
+        "--trackers bytetrack,botsort --subsample 2 --sans-coupures"
     ),
     md("## 5. Comparatif chiffre"),
     code(
@@ -116,8 +122,8 @@ CELLULES = [
     md(
         "## 6. Verification visuelle\n"
         "\n"
-        "Quelques frames d'une video annotee (couleur = ID ; si la couleur d'un joueur\n"
-        "change sans coupure de plan, c'est une casse d'ID)."
+        "Quelques frames d'une video annotee (couleur = ID). Le clip etant un plan\n"
+        "continu, si la couleur d'un joueur change, c'est une casse d'ID a diagnostiquer."
     ),
     code(
         "import glob\n"

@@ -7,6 +7,7 @@ import supervision as sv
 
 from pivot_ai.benchmark import (
     bornes_pixels,
+    detailler_reprises,
     resume_benchmark,
     trajectoires_pixels,
 )
@@ -96,3 +97,42 @@ def test_resume_benchmark_avec_coupure() -> None:
     assert r.nb_reprises_id == 0
     assert r.nb_joueurs_estimes == 3
     assert r.nb_coupures_plan == 1
+
+
+def test_cause_detection_quand_trou_vide() -> None:
+    """Trou sans aucune detection pres de la derniere position -> cause detection."""
+    dets = _scenario_fragmente()  # frames 9-10 : rien pres de (108, 100)
+    bornes = bornes_pixels(trajectoires_pixels(dets))
+    reprises = detecter_reprises_bornes(bornes, seuil_distance=120.0, seuil_frames=30)
+    details = detailler_reprises(dets, bornes, reprises, fps=25.0, seuil_px=60.0)
+    assert len(details) == 1
+    assert details[0].cause == "detection"
+    assert details[0].gap_frames == 3  # frame_debut 11 - frame_fin 8
+
+
+def test_cause_tracker_quand_detection_presente_pendant_trou() -> None:
+    """Detection presente pres de la derniere position pendant le trou -> cause tracker."""
+    dets: dict[int, sv.Detections] = {}
+    for fi in range(0, 9):
+        dets[fi] = _dets([(1, 100 + fi, 100)])
+    dets[9] = _dets([(3, 109, 100)])   # meme joueur toujours vu, ID different
+    dets[10] = _dets([(3, 109, 100)])
+    for fi in range(11, 20):
+        dets[fi] = _dets([(2, 109, 100)])
+    bornes = bornes_pixels(trajectoires_pixels(dets))
+    reprises = detecter_reprises_bornes(bornes, seuil_distance=120.0, seuil_frames=30)
+    details = detailler_reprises(dets, bornes, reprises, fps=25.0, seuil_px=60.0)
+    causes = {(d.tracker_a, d.tracker_b): d.cause for d in details}
+    assert causes.get((1, 3)) == "tracker" or causes.get((1, 2)) == "tracker"
+
+
+def test_resume_compte_les_causes() -> None:
+    """Le resume ventile les reprises par cause et expose le detail date."""
+    r = resume_benchmark(
+        _scenario_fragmente(), fps=25.0, subsample=1,
+        seuil_distance_px=120.0, seuil_frames=30,
+    )
+    assert r.nb_reprises_cause_detection + r.nb_reprises_cause_tracker == r.nb_reprises_id
+    assert r.nb_reprises_cause_detection == 1
+    assert len(r.reprises_detail) == 1
+    assert r.reprises_detail[0]["cause"] == "detection"

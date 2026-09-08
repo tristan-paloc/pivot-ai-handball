@@ -175,6 +175,50 @@ def commande_traiter(args: argparse.Namespace) -> int:
     return 0
 
 
+def commande_benchmark(args: argparse.Namespace) -> int:
+    """Commande `pivot-ai benchmark` : compare les trackers sur des clips."""
+    from pivot_ai.benchmark import lancer_benchmark
+    from pivot_ai.config import ModeleConfig
+
+    dossier = Path(args.clips)
+    if not dossier.exists():
+        logger.error("Dossier de clips introuvable : %s", dossier)
+        return 1
+    clips = sorted(dossier.glob("*.mp4")) if dossier.is_dir() else [dossier]
+    if args.motif:
+        clips = [c for c in clips if args.motif in c.name]
+    if not clips:
+        logger.error("Aucun clip .mp4 trouve dans %s", dossier)
+        return 1
+
+    trackers = [t.strip() for t in args.trackers.split(",") if t.strip()]
+    modele_config = ModeleConfig.pour_handball(args.modele) if args.modele else None
+
+    logger.info("Benchmark : %d clip(s) x %s", len(clips), trackers)
+    try:
+        runs = lancer_benchmark(
+            clips=clips,
+            trackers=trackers,
+            sortie=args.sortie,
+            modele_config=modele_config,
+            subsample=args.subsample,
+            generer_videos=not args.no_video,
+        )
+    except Exception:
+        logger.exception("Echec du benchmark")
+        return 1
+
+    logger.info("=== Runs (%d) ===", len(runs))
+    for r in runs:
+        m = r.resume
+        logger.info(
+            "  %-40s %-9s tracks=%d reprises=%d frag=%.2f",
+            m.clip, m.tracker, m.nb_tracks, m.nb_reprises_id, m.fragmentation,
+        )
+    logger.info("Rapport + comparatif dans : %s", args.sortie)
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Parser et point d'entree
 # ---------------------------------------------------------------------------
@@ -229,6 +273,38 @@ def construire_parser() -> argparse.ArgumentParser:
         help="Ne pas decouper les actions detectees (par defaut elles le sont)",
     )
     p_traiter.set_defaults(func=commande_traiter)
+
+    p_bench = sous.add_parser(
+        "benchmark",
+        help="Compare les trackers (continuite d'ID) sur un dossier de clips.",
+    )
+    p_bench.add_argument(
+        "--clips", required=True,
+        help="Dossier de clips .mp4 (ou un fichier .mp4 unique)",
+    )
+    p_bench.add_argument(
+        "--sortie", required=True, help="Dossier de sortie (metriques + videos + rapport)",
+    )
+    p_bench.add_argument(
+        "--trackers", default="bytetrack,botsort",
+        help="Trackers a comparer, separes par des virgules (defaut : bytetrack,botsort)",
+    )
+    p_bench.add_argument(
+        "--modele", default=None,
+        help="Chemin du modele handball fine-tune (.pt). Sinon YOLOv8m COCO par defaut.",
+    )
+    p_bench.add_argument(
+        "--subsample", type=int, default=2, help="1 frame sur N (defaut 2)",
+    )
+    p_bench.add_argument(
+        "--motif", default=None,
+        help="Ne garder que les clips dont le nom contient ce motif (ex: evt_054)",
+    )
+    p_bench.add_argument(
+        "--no-video", action="store_true", dest="no_video",
+        help="Ne pas generer les videos annotees (metriques seules)",
+    )
+    p_bench.set_defaults(func=commande_benchmark)
 
     return parser
 

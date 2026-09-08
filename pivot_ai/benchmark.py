@@ -17,10 +17,15 @@ Purement geometrique -> testable sans GPU sur des detections synthetiques.
 
 from __future__ import annotations
 
+import csv
+import json
 import logging
 import statistics
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
+import cv2
 import supervision as sv
 
 from pivot_ai.metriques import (
@@ -28,8 +33,13 @@ from pivot_ai.metriques import (
     composantes_connexes,
     detecter_reprises_bornes,
 )
+from pivot_ai.plans import detecter_changements_plan
 
 logger = logging.getLogger(__name__)
+
+# Signature d'une fonction de tracking injectable (permet de tester le runner
+# sans GPU en fournissant des detections synthetiques).
+FonctionTracking = Callable[[str, str, int, float], dict[int, sv.Detections]]
 
 
 def _centre_bbox(xyxy) -> tuple[float, float]:
@@ -172,3 +182,181 @@ def resume_benchmark(
         nb_coupures_plan=len(frames_coupure),
         frames_coupure=list(frames_coupure),
     )
+
+
+# ---------------------------------------------------------------------------
+# Runner : lance le benchmark sur des clips x trackers
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RunBenchmark:
+    """Un run (clip x tracker) : metriques + chemin de la video annotee."""
+
+    resume: ResumeBenchmark
+    chemin_video_annotee: Path | None = None
+
+
+def _metadonnees_video(chemin_video: str) -> tuple[float, int, int]:
+    """Lit (fps, largeur, hauteur) d'une video."""
+    cap = cv2.VideoCapture(chemin_video)
+    if not cap.isOpened():
+        raise RuntimeError(f"Impossible d'ouvrir la video : {chemin_video}")
+    fps = float(cap.get(cv2.CAP_PROP_FPS)) or 25.0
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+    return fps, w, h
+
+
+def _tracking_reel(
+    chemin_video: str, tracker: str, subsample: int, fps: float,
+    modele_config=None,
+) -> dict[int, sv.Detections]:
+    """Fonction de tracking par defaut (necessite le modele + torch/GPU)."""
+    from pivot_ai.detection import DetecteurLocal, detecter_video
+    from pivot_ai.tracking import tracker_detections, tracker_video_botsort
+
+    detecteur = DetecteurLocal(modele_config)
+    if tracker == "bytetrack":
+        dets_par_frame = detecter_video(chemin_video, detecteur, subsample=subsample)
+        trackees, _ = tracker_detections(dets_par_frame, fps=fps, subsample=subsample)
+        return trackees
+    if tracker == "botsort":
+        trackees, _ = tracker_video_botsort(chemin_video, detecteur, subsample=subsample)
+        return trackees
+    raise ValueError(f"tracker inconnu : {tracker!r} (attendu 'bytetrack' ou 'botsort')")
+
+
+def lancer_benchmark(
+    clips: list[str | Path],
+    trackers: list[str],
+    sortie: str | Path,
+    modele_config=None,
+    subsample: int = 2,
+    fonction_tracking: FonctionTracking | None = None,
+    seuil_distance_px: float | None = None,
+    seuil_frames: int | None = None,
+    min_frames_fragment: int = 5,
+    generer_videos: bool = True,
+) -> list[RunBenchmark]:
+    """Lance le benchmark de continuite d'ID sur chaque (clip x tracker).
+
+    Args:
+        clips: liste de chemins video.
+        trackers: sous-ensemble de {"bytetrack", "botsort"}.
+        sortie: dossier de sortie (metriques + videos annotees + rapport).
+        modele_config: ModeleConfig (idealement le modele handball fine-tune).
+        subsample: 1 frame sur N pour detection/tracking et coupures.
+        fonction_tracking: injectable (tests sans GPU) ; defaut = _tracking_reel.
+        seuil_distance_px: distance max (px) pour une reprise ; defaut 8% largeur.
+        seuil_frames: delai max (frames source) ; defaut ~1s (fps).
+        min_frames_fragment: seuil "fragment court".
+        generer_videos: si True, produit une video annotee par run.
+
+    Returns:
+        liste de RunBenchmark. Ecrit aussi comparatif.json/.csv et RAPPORT.md.
+    """
+    from pivot_ai.video_annotee import generer_video_annotee
+
+    sortie = Path(sortie)
+    sortie.mkdir(parents=True, exist_ok=True)
+    clips = [str(c) for c in clips]
+
+    runs: list[RunBenchmark] = []
+    for clip in clips:
+        nom_clip = Path(clip).name
+        fps, largeur, _hauteur = _metadonnees_video(clip)
+        s_px = seuil_distance_px if seuil_distance_px is not None else 0.08 * largeur
+        s_fr = seuil_frames if seuil_frames is not None else int(round(fps))  # ~1 s
+        coupures = tuple(detecter_changements_plan(clip, subsample=subsample))
+        logger.info("Clip %s : %.1f fps, %d coupure(s)", nom_clip, fps, len(coupures))
+
+        for tracker in trackers:
+            fn = fonction_tracking or (
+                lambda c, t, sub, f: _tracking_reel(c, t, sub, f, modele_config)
+            )
+            trackees = fn(clip, tracker, subsample, fps)
+            resume = resume_benchmark(
+                trackees, fps=fps, subsample=subsample,
+                seuil_distance_px=s_px, seuil_frames=s_fr,
+                min_frames_fragment=min_frames_fragment,
+                frames_coupure=coupures, tracker=tracker, clip=nom_clip,
+            )
+            chemin_annote: Path | None = None
+            if generer_videos:
+                chemin_annote = generer_video_annotee(
+                    clip, trackees, sortie / f"{Path(clip).stem}__{tracker}.mp4",
+                    subsample=subsample, frames_coupure=coupures,
+                )
+            runs.append(RunBenchmark(resume=resume, chemin_video_annotee=chemin_annote))
+
+    ecrire_comparatif(runs, sortie)
+    ecrire_rapport(runs, sortie)
+    return runs
+
+
+def ecrire_comparatif(runs: list[RunBenchmark], sortie: str | Path) -> tuple[Path, Path]:
+    """Ecrit comparatif.json et comparatif.csv des runs. Retourne (json, csv)."""
+    sortie = Path(sortie)
+    lignes = [r.resume.as_dict() for r in runs]
+
+    chemin_json = sortie / "comparatif.json"
+    chemin_json.write_text(json.dumps(lignes, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    chemin_csv = sortie / "comparatif.csv"
+    if lignes:
+        colonnes = [c for c in lignes[0] if c != "frames_coupure"]
+        with chemin_csv.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=colonnes, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(lignes)
+    return chemin_json, chemin_csv
+
+
+def ecrire_rapport(runs: list[RunBenchmark], sortie: str | Path) -> Path:
+    """Ecrit un RAPPORT.md comparatif lisible (table + lecture data-driven)."""
+    sortie = Path(sortie)
+    lignes: list[str] = ["# Benchmark continuite d'identite\n"]
+
+    entete = (
+        "| clip | tracker | tracks | joueurs est. | reprises ID | "
+        "fragments courts | fragmentation | long. moy (s) | coupures |"
+    )
+    sep = "|" + "---|" * 9
+    lignes += [entete, sep]
+    for r in runs:
+        m = r.resume
+        lignes.append(
+            f"| {m.clip} | {m.tracker} | {m.nb_tracks} | {m.nb_joueurs_estimes} | "
+            f"{m.nb_reprises_id} | {m.nb_fragments_courts} | {m.fragmentation} | "
+            f"{m.longueur_moyenne_s} | {m.nb_coupures_plan} |"
+        )
+
+    # Lecture : meilleur tracker = moins de reprises + fragmentation la plus basse.
+    par_tracker: dict[str, list[ResumeBenchmark]] = {}
+    for r in runs:
+        par_tracker.setdefault(r.resume.tracker, []).append(r.resume)
+    lignes.append("\n## Lecture\n")
+    if par_tracker:
+        def score(resumes: list[ResumeBenchmark]) -> float:
+            return sum(x.nb_reprises_id for x in resumes) + sum(x.fragmentation for x in resumes)
+        classement = sorted(par_tracker.items(), key=lambda kv: score(kv[1]))
+        meilleur = classement[0][0]
+        lignes.append(
+            f"- **Tracker le plus continu sur ces clips : `{meilleur}`** "
+            "(total reprises d'ID + fragmentation le plus bas).\n"
+        )
+        for tr, resumes in classement:
+            tot_rep = sum(x.nb_reprises_id for x in resumes)
+            lignes.append(f"  - `{tr}` : {tot_rep} reprises d'ID cumulees sur {len(resumes)} clip(s).")
+
+    lignes.append(
+        "\n> Part detection vs tracker et taux de recuperation d'ID sur occlusions "
+        "brefs : voir les metriques de verite terrain (etape 3) — non calculables "
+        "sans annotation des joueurs de reference.\n"
+    )
+
+    chemin = sortie / "RAPPORT.md"
+    chemin.write_text("\n".join(lignes) + "\n", encoding="utf-8")
+    return chemin

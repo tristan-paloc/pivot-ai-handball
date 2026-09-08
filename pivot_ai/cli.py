@@ -288,7 +288,9 @@ def construire_parser() -> argparse.ArgumentParser:
     )
     p_bench.add_argument(
         "--trackers", default="bytetrack,botsort",
-        help="Trackers a comparer, separes par des virgules (defaut : bytetrack,botsort)",
+        help="Trackers a comparer, separes par des virgules (defaut : bytetrack,botsort). "
+             "Suffixe '+stitch' = recollage offline apres le tracker "
+             "(ex: bytetrack+stitch), sans relancer l'inference.",
     )
     p_bench.add_argument(
         "--modele", default=None,

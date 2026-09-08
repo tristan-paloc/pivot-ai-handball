@@ -37,14 +37,19 @@ CELLULES = [
     md(
         "# Benchmark continuite d'identite (tracking)\n"
         "\n"
-        "Compare **ByteTrack** vs **BoT-SORT + ReID** sur un clip handball **plan\n"
-        "continu** (`MHB_Chartres_test_1min.mp4`, ~1 min, sans changement de camera),\n"
-        "avec le modele fine-tune. On lance avec `--sans-coupures` : le clip est traite\n"
-        "comme un seul plan, donc **toute rupture d'ID compte comme un vrai probleme de\n"
-        "tracking**.\n"
+        "Compare **ByteTrack brut** vs **ByteTrack + stitching** (recollage offline des\n"
+        "fragments d'ID apres coup) sur un clip handball **plan continu**\n"
+        "(`MHB_Chartres_test_1min.mp4`, ~1 min, sans changement de camera), avec le\n"
+        "modele fine-tune. On lance avec `--sans-coupures` : le clip est traite comme un\n"
+        "seul plan, donc **toute rupture d'ID compte comme un vrai probleme de tracking**.\n"
         "\n"
-        "Produit : videos annotees (IDs colores), `comparatif.csv/json` et `RAPPORT.md`\n"
-        "(timestamps des ruptures + cause estimee detection vs tracker).\n"
+        "Le stitching est **conservateur** : il ne recolle que les fragments surs/probables\n"
+        "et uniques, et refuse les cas ambigus (il vaut mieux un fragment de trop qu'une\n"
+        "fusion de deux joueurs).\n"
+        "\n"
+        "Produit : videos annotees (IDs colores), `comparatif.csv/json`, `RAPPORT.md`\n"
+        "(timestamps des ruptures + cause + section avant/apres stitching) et\n"
+        "`merges_*.json/.csv` (chaque recollage date, score, categorie).\n"
         "\n"
         "**Prerequis** : runtime **T4 GPU**, et le clip depose sur Drive dans\n"
         "`/MyDrive/PIVOT_AI/benchmark_1min/`."
@@ -102,14 +107,15 @@ CELLULES = [
     md(
         "## 4. Lancer le benchmark\n"
         "\n"
-        "ByteTrack vs BoT-SORT sur le clip. `--sans-coupures` = plan continu :\n"
+        "ByteTrack brut vs ByteTrack + stitching. `--sans-coupures` = plan continu :\n"
         "aucune coupure detectee, chaque rupture d'ID est un vrai probleme de tracking.\n"
-        "Compter quelques minutes sur T4 (BoT-SORT/ReID est le plus lent)."
+        "Le stitching reutilise la sortie de ByteTrack (pas de seconde inference), donc\n"
+        "c'est rapide."
     ),
     code(
         "!python -m pivot_ai.cli benchmark --clips {DOSSIER_CLIPS} "
         "--sortie {DOSSIER_SORTIE} --modele {MODELE} "
-        "--trackers bytetrack,botsort --subsample 2 --sans-coupures"
+        "--trackers bytetrack,bytetrack+stitch --subsample 2 --sans-coupures"
     ),
     md("## 5. Comparatif chiffre"),
     code(
@@ -120,10 +126,28 @@ CELLULES = [
         "print(open(f\"{DOSSIER_SORTIE}/RAPPORT.md\", encoding=\"utf-8\").read())"
     ),
     md(
+        "## 5b. Recollages effectues (a verifier)\n"
+        "\n"
+        "Chaque merge du stitching : timestamp, IDs recolles, gap, score et categorie\n"
+        "(`sur` / `probable` retenus ; `ambigu` refuse). C'est ici qu'on verifie qu'on\n"
+        "ne fusionne pas deux joueurs differents."
+    ),
+    code(
+        "import glob\n"
+        "fichiers_merges = sorted(glob.glob(f\"{DOSSIER_SORTIE}/merges_*.csv\"))\n"
+        "for fm in fichiers_merges:\n"
+        "    print(fm)\n"
+        "    mdf = pl.read_csv(fm)\n"
+        "    print(mdf)\n"
+        "    retenus = mdf.filter(pl.col('retenu'))\n"
+        "    print(f\"  retenus : {len(retenus)} | ambigus refuses : {len(mdf) - len(retenus)}\")"
+    ),
+    md(
         "## 6. Verification visuelle\n"
         "\n"
-        "Quelques frames d'une video annotee (couleur = ID). Le clip etant un plan\n"
-        "continu, si la couleur d'un joueur change, c'est une casse d'ID a diagnostiquer."
+        "Quelques frames des videos annotees (couleur = ID). Compare\n"
+        "`...__bytetrack.mp4` (avant) et `...__bytetrack+stitch.mp4` (apres) : un joueur\n"
+        "recolle garde une seule couleur sur toute la sequence."
     ),
     code(
         "import glob\n"

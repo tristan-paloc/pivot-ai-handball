@@ -41,6 +41,10 @@ logger = logging.getLogger(__name__)
 # sans GPU en fournissant des detections synthetiques).
 FonctionTracking = Callable[[str, str, int, float], dict[int, sv.Detections]]
 
+# Un tracker "<base>+stitch" applique le recollage offline sur la sortie de
+# <base> (ex : "bytetrack+stitch"), sans relancer l'inference.
+SUFFIXE_STITCH = "+stitch"
+
 
 def _centre_bbox(xyxy) -> tuple[float, float]:
     """Centre (x, y) en pixels d'une bbox [x1, y1, x2, y2]."""
@@ -282,6 +286,7 @@ class RunBenchmark:
 
     resume: ResumeBenchmark
     chemin_video_annotee: Path | None = None
+    merges: list[dict] | None = None  # journal du stitching (variantes +stitch)
 
 
 def _metadonnees_video(chemin_video: str) -> tuple[float, int, int]:
@@ -345,6 +350,7 @@ def lancer_benchmark(
     Returns:
         liste de RunBenchmark. Ecrit aussi comparatif.json/.csv et RAPPORT.md.
     """
+    from pivot_ai.stitching import recoller_tracks
     from pivot_ai.video_annotee import generer_video_annotee
 
     sortie = Path(sortie)
@@ -367,11 +373,29 @@ def lancer_benchmark(
             "" if detecter_coupures else " (detection desactivee : plan continu)",
         )
 
+        fn = fonction_tracking or (
+            lambda c, t, sub, f: _tracking_reel(c, t, sub, f, modele_config)
+        )
+        # Cache des sorties de tracking de base pour deriver les variantes +stitch
+        # sans relancer l'inference (couteuse sur GPU).
+        cache_base: dict[str, dict[int, sv.Detections]] = {}
+
         for tracker in trackers:
-            fn = fonction_tracking or (
-                lambda c, t, sub, f: _tracking_reel(c, t, sub, f, modele_config)
+            base = (
+                tracker[: -len(SUFFIXE_STITCH)]
+                if tracker.endswith(SUFFIXE_STITCH) else tracker
             )
-            trackees = fn(clip, tracker, subsample, fps)
+            if base not in cache_base:
+                cache_base[base] = fn(clip, base, subsample, fps)
+
+            merges: list[dict] | None = None
+            if tracker.endswith(SUFFIXE_STITCH):
+                res_stitch = recoller_tracks(cache_base[base], fps=fps)
+                trackees = res_stitch.detections
+                merges = [m.as_dict() for m in res_stitch.merges]
+            else:
+                trackees = cache_base[base]
+
             resume = resume_benchmark(
                 trackees, fps=fps, subsample=subsample,
                 seuil_distance_px=s_px, seuil_frames=s_fr,
@@ -384,9 +408,12 @@ def lancer_benchmark(
                     clip, trackees, sortie / f"{Path(clip).stem}__{tracker}.mp4",
                     subsample=subsample, frames_coupure=coupures,
                 )
-            runs.append(RunBenchmark(resume=resume, chemin_video_annotee=chemin_annote))
+            runs.append(RunBenchmark(
+                resume=resume, chemin_video_annotee=chemin_annote, merges=merges,
+            ))
 
     ecrire_comparatif(runs, sortie)
+    ecrire_merges(runs, sortie)
     ecrire_rapport(runs, sortie)
     return runs
 
@@ -408,6 +435,109 @@ def ecrire_comparatif(runs: list[RunBenchmark], sortie: str | Path) -> tuple[Pat
             w.writeheader()
             w.writerows(lignes)
     return chemin_json, chemin_csv
+
+
+def _rapport_stitching(runs: list[RunBenchmark], lignes: list[str]) -> None:
+    """Ajoute au rapport les sections avant/apres et le journal des recollages."""
+    stitch_runs = [r for r in runs if r.merges is not None]
+    if not stitch_runs:
+        return
+
+    par_cle = {(r.resume.clip, r.resume.tracker): r.resume for r in runs}
+    lignes.append("\n## Stitching : avant / apres\n")
+    lignes.append("| clip | base | tracks | reprises ID | long. med. (frames) |")
+    lignes.append("|---|---|---|---|---|")
+    for r in stitch_runs:
+        m = r.resume
+        base = m.tracker[: -len(SUFFIXE_STITCH)]
+        avant = par_cle.get((m.clip, base))
+        if avant is not None:
+            lignes.append(
+                f"| {m.clip} | {base} (brut) | {avant.nb_tracks} | "
+                f"{avant.nb_reprises_id} | {avant.longueur_mediane_frames} |"
+            )
+        lignes.append(
+            f"| {m.clip} | {m.tracker} | {m.nb_tracks} | "
+            f"{m.nb_reprises_id} | {m.longueur_mediane_frames} |"
+        )
+
+    lignes.append("\n## Recollages (merges) par run\n")
+    for r in stitch_runs:
+        merges = r.merges or []
+        retenus = [x for x in merges if x["retenu"]]
+        srs = sum(1 for x in retenus if x["categorie"] == "sur")
+        prob = sum(1 for x in retenus if x["categorie"] == "probable")
+        ambigus = [x for x in merges if not x["retenu"]]
+        lignes.append(f"### {r.resume.clip} — `{r.resume.tracker}`")
+        lignes.append(
+            f"- {len(retenus)} recollages retenus (**{srs} surs**, {prob} probables), "
+            f"{len(ambigus)} candidats ambigus **refuses**.\n"
+        )
+        if retenus:
+            lignes.append("**Merges retenus** (a verifier a l'oeil sur la video annotee) :")
+            lignes.append("| t (s) | ID | -> ID | gap | dist_pred (px) | score | categorie |")
+            lignes.append("|---|---|---|---|---|---|---|")
+            for x in retenus[:15]:
+                lignes.append(
+                    f"| {x['seconde']} | {x['tracker_a']} | {x['tracker_b']} | "
+                    f"{x['gap_frames']} | {x['distance_predite_px']} | "
+                    f"{x['score']} | {x['categorie']} |"
+                )
+            if len(retenus) > 15:
+                lignes.append(f"| ... | | | | | | +{len(retenus) - 15} autres |")
+            lignes.append("")
+        if ambigus:
+            lignes.append("**Refuses (ambigus)** — laisses non recolles par prudence :")
+            lignes.append("| t (s) | ID | ~ ID | gap | score | raison |")
+            lignes.append("|---|---|---|---|---|---|")
+            for x in ambigus[:10]:
+                raison = x["criteres"][-1] if x.get("criteres") else ""
+                lignes.append(
+                    f"| {x['seconde']} | {x['tracker_a']} | {x['tracker_b']} | "
+                    f"{x['gap_frames']} | {x['score']} | {raison} |"
+                )
+            if len(ambigus) > 10:
+                lignes.append(f"| ... | | | | | +{len(ambigus) - 10} autres |")
+            lignes.append("")
+
+    lignes.append(
+        "> Recollage **conservateur** : seuls les candidats surs/probables et "
+        "**uniques** sont fusionnes ; les cas a plusieurs candidats plausibles sont "
+        "refuses (on prefere un fragment de trop qu'une fusion de deux joueurs). "
+        "Detail complet par merge dans `merges_*.json/.csv`.\n"
+    )
+
+
+def ecrire_merges(runs: list[RunBenchmark], sortie: str | Path) -> list[Path]:
+    """Ecrit le journal des recollages (merges_*.json/.csv) pour les runs +stitch.
+
+    Un fichier par run possedant des merges, nomme d'apres le clip et le tracker.
+    Permet de verifier a la main chaque recollage (timestamp, gap, score, categorie).
+
+    Returns:
+        liste des chemins ecrits.
+    """
+    sortie = Path(sortie)
+    chemins: list[Path] = []
+    colonnes = [
+        "tracker_a", "tracker_b", "seconde", "gap_frames", "distance_px",
+        "distance_predite_px", "ratio_taille", "score", "categorie", "retenu",
+    ]
+    for r in runs:
+        if not r.merges:
+            continue
+        base = f"merges_{Path(r.resume.clip).stem}__{r.resume.tracker}"
+        chemin_json = sortie / f"{base}.json"
+        chemin_json.write_text(
+            json.dumps(r.merges, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        chemin_csv = sortie / f"{base}.csv"
+        with chemin_csv.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=colonnes, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(r.merges)
+        chemins += [chemin_json, chemin_csv]
+    return chemins
 
 
 def ecrire_rapport(runs: list[RunBenchmark], sortie: str | Path) -> Path:
@@ -479,6 +609,8 @@ def ecrire_rapport(runs: list[RunBenchmark], sortie: str | Path) -> Path:
         "reste utile pour valider finement, mais la repartition ci-dessus ne la "
         "necessite pas.\n"
     )
+
+    _rapport_stitching(runs, lignes)
 
     chemin = sortie / "RAPPORT.md"
     chemin.write_text("\n".join(lignes) + "\n", encoding="utf-8")

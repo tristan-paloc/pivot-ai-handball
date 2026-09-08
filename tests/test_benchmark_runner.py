@@ -113,6 +113,45 @@ def test_lancer_benchmark_avec_tracking_injecte(tmp_path: Path) -> None:
     assert par_tracker["bytetrack"].nb_tracks >= par_tracker["botsort"].nb_tracks
 
 
+def _tracking_cascade(nb_frames: int = 31) -> dict[int, sv.Detections]:
+    """Un joueur fragmente en 3 IDs (avance regulierement) + un joueur distinct."""
+    dets: dict[int, sv.Detections] = {}
+    for fi in range(nb_frames):
+        items = [(99, 600.0, 400.0)]
+        x = 100.0 + fi * 3.0
+        if fi <= 8:
+            items.append((1, x, 100.0))
+        elif 11 <= fi <= 19:
+            items.append((2, x, 100.0))
+        elif fi >= 22:
+            items.append((3, x, 100.0))
+        dets[fi] = _dets(items)
+    return dets
+
+
+def test_benchmark_variante_stitch(tmp_path: Path) -> None:
+    """Le token bytetrack+stitch derive du bytetrack, reduit les tracks, porte ses merges."""
+    source = tmp_path / "cascade.mp4"
+    generer_video_factice(source, nb_frames=31, fps=25.0, largeur=640, hauteur=360)
+    runs = lancer_benchmark(
+        clips=[source], trackers=["bytetrack", "bytetrack+stitch"],
+        sortie=tmp_path / "b",
+        fonction_tracking=lambda c, t, s, f: _tracking_cascade(31),
+        subsample=1, seuil_distance_px=120.0, seuil_frames=30,
+        generer_videos=False, detecter_coupures=False,
+    )
+    par_tracker = {r.resume.tracker: r for r in runs}
+    brut = par_tracker["bytetrack"].resume
+    stitch = par_tracker["bytetrack+stitch"].resume
+    # la cascade 1->2->3 est recollee : moins de tracks apres stitching
+    assert stitch.nb_tracks < brut.nb_tracks
+    assert stitch.nb_tracks == 2  # joueur recolle + joueur distinct
+    # le run stitch porte son journal de merges + le fichier est ecrit
+    assert par_tracker["bytetrack+stitch"].merges is not None
+    assert (tmp_path / "b" / "merges_cascade__bytetrack+stitch.json").exists()
+    assert (tmp_path / "b" / "merges_cascade__bytetrack+stitch.csv").exists()
+
+
 def test_benchmark_sans_coupures(tmp_path: Path) -> None:
     """detecter_coupures=False : plan continu, aucune coupure n'est comptee."""
     source = tmp_path / "continu.mp4"

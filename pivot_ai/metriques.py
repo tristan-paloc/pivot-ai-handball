@@ -31,7 +31,7 @@ class ResumeQualiteTracking:
 
 
 @dataclass
-class _BornesTrack:
+class BornesTrack:
     """Premiere et derniere position reelle d'une piste."""
 
     frame_debut: int
@@ -43,7 +43,7 @@ class _BornesTrack:
     nb_reel: int
 
 
-def _bornes_track(positions: list[PositionJoueur]) -> _BornesTrack | None:
+def _bornes_track(positions: list[PositionJoueur]) -> BornesTrack | None:
     """Extrait les bornes temporelles/spatiales d'une piste (positions reelles)."""
     reels = sorted(
         (p for p in positions if not p.interpole), key=lambda p: p.frame_idx
@@ -51,7 +51,7 @@ def _bornes_track(positions: list[PositionJoueur]) -> _BornesTrack | None:
     if not reels:
         return None
     d, f = reels[0], reels[-1]
-    return _BornesTrack(
+    return BornesTrack(
         frame_debut=d.frame_idx,
         x_debut=d.x_m,
         y_debut=d.y_m,
@@ -62,33 +62,34 @@ def _bornes_track(positions: list[PositionJoueur]) -> _BornesTrack | None:
     )
 
 
-def detecter_reprises_id(
-    positions_par_tracker: dict[int, list[PositionJoueur]],
-    seuil_distance_m: float = 3.0,
-    seuil_frames: int = 30,
-) -> list[tuple[int, int]]:
-    """Detecte les reprises d'ID (piste A eteinte -> piste B reprend tout pres).
+def _coupure_entre(frame_fin: int, frame_debut: int, frames_coupure: tuple[int, ...]) -> bool:
+    """True si un changement de plan tombe dans l'intervalle ]frame_fin, frame_debut]."""
+    return any(frame_fin < c <= frame_debut for c in frames_coupure)
 
-    Une reprise (A, B) est comptee si B demarre apres la fin de A, dans un delai
-    <= seuil_frames, et a une distance <= seuil_distance_m du dernier point de A.
-    Chaque piste a au plus un predecesseur et un successeur (chaines simples) :
-    on associe chaque fin de piste a la reprise la plus proche non deja prise.
+
+def detecter_reprises_bornes(
+    bornes: dict[int, BornesTrack],
+    seuil_distance: float,
+    seuil_frames: int,
+    frames_coupure: tuple[int, ...] = (),
+) -> list[tuple[int, int]]:
+    """Coeur generique : detecte les reprises d'ID a partir de bornes de tracks.
+
+    Reutilise en espace terrain (metres) comme en espace image (pixels) : seule
+    l'unite de `seuil_distance` change. Une reprise (A, B) est comptee si B
+    demarre apres la fin de A, dans un delai <= seuil_frames, a une distance
+    <= seuil_distance, ET sans changement de plan entre les deux (une reprise
+    qui enjambe une coupure camera n'est PAS un echec de tracking).
 
     Args:
-        positions_par_tracker: positions reelles par tracker_id (avant filtre)
-        seuil_distance_m: distance max (m) entre fin de A et debut de B
-        seuil_frames: delai max (frames source) entre fin de A et debut de B
+        bornes: dict tracker_id -> BornesTrack (premiere/derniere position).
+        seuil_distance: distance max entre fin de A et debut de B (m ou px).
+        seuil_frames: delai max (frames) entre fin de A et debut de B.
+        frames_coupure: indices de frames ou un changement de plan se produit.
 
     Returns:
         liste de couples (tracker_a, tracker_b) = reprises detectees.
     """
-    bornes = {
-        tid: b
-        for tid, pos in positions_par_tracker.items()
-        if (b := _bornes_track(pos)) is not None
-    }
-
-    # On traite les fins de piste par ordre chronologique.
     fins = sorted(bornes.items(), key=lambda kv: kv[1].frame_fin)
     debut_pris: set[int] = set()
     reprises: list[tuple[int, int]] = []
@@ -102,8 +103,10 @@ def detecter_reprises_id(
             dt = bb.frame_debut - ba.frame_fin
             if dt <= 0 or dt > seuil_frames:
                 continue
+            if _coupure_entre(ba.frame_fin, bb.frame_debut, frames_coupure):
+                continue
             dist = math.hypot(bb.x_debut - ba.x_fin, bb.y_debut - ba.y_fin)
-            if dist > seuil_distance_m:
+            if dist > seuil_distance:
                 continue
             if meilleure_dist is None or dist < meilleure_dist:
                 meilleure_dist = dist
@@ -113,6 +116,52 @@ def detecter_reprises_id(
             debut_pris.add(meilleur)
 
     return reprises
+
+
+def composantes_connexes(tids: list[int], reprises: list[tuple[int, int]]) -> int:
+    """Nb de composantes connexes (union-find) : chaque reprise fusionne 2 tracks."""
+    parent = {t: t for t in tids}
+
+    def racine(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a, b in reprises:
+        if a in parent and b in parent:
+            ra, rb = racine(a), racine(b)
+            if ra != rb:
+                parent[ra] = rb
+    return len({racine(t) for t in tids})
+
+
+def detecter_reprises_id(
+    positions_par_tracker: dict[int, list[PositionJoueur]],
+    seuil_distance_m: float = 3.0,
+    seuil_frames: int = 30,
+    frames_coupure: tuple[int, ...] = (),
+) -> list[tuple[int, int]]:
+    """Detecte les reprises d'ID en espace terrain (metres).
+
+    Args:
+        positions_par_tracker: positions reelles par tracker_id (avant filtre)
+        seuil_distance_m: distance max (m) entre fin de A et debut de B
+        seuil_frames: delai max (frames source) entre fin de A et debut de B
+        frames_coupure: indices des changements de plan (reprises enjambant une
+            coupure ignorees)
+
+    Returns:
+        liste de couples (tracker_a, tracker_b) = reprises detectees.
+    """
+    bornes = {
+        tid: b
+        for tid, pos in positions_par_tracker.items()
+        if (b := _bornes_track(pos)) is not None
+    }
+    return detecter_reprises_bornes(
+        bornes, seuil_distance_m, seuil_frames, frames_coupure
+    )
 
 
 def estimer_nb_joueurs(
@@ -135,29 +184,11 @@ def estimer_nb_joueurs(
     Returns:
         nb de joueurs estimes (composantes connexes).
     """
-    tids = list(positions_par_tracker.keys())
-    parent = {t: t for t in tids}
-
-    def racine(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def unir(a: int, b: int) -> None:
-        ra, rb = racine(a), racine(b)
-        if ra != rb:
-            parent[ra] = rb
-
     if reprises is None:
         reprises = detecter_reprises_id(
             positions_par_tracker, seuil_distance_m, seuil_frames
         )
-    for a, b in reprises:
-        if a in parent and b in parent:
-            unir(a, b)
-
-    return len({racine(t) for t in tids})
+    return composantes_connexes(list(positions_par_tracker.keys()), reprises)
 
 
 def resumer_qualite_tracking(
